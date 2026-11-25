@@ -9449,7 +9449,7 @@ struct SettingsCatDef { const char* label; const char* icon; };
 // Built-in tile hide bits (app_hide pref). Order is FROZEN — append only.
 enum {
   APPHIDE_SNAKE = 1u << 0,  APPHIDE_AIRTIME = 1u << 1, APPHIDE_MONITOR = 1u << 2,
-  APPHIDE_SPECTRUM = 1u << 3, APPHIDE_DISCOVER = 1u << 4, APPHIDE_VNC = 1u << 5,
+  APPHIDE_SPECTRUM = 1u << 3, APPHIDE_DISCOVER = 1u << 4, APPHIDE_VNC = 1u << 5,   // VNC: retired tile (#908), bit kept
   APPHIDE_REMOTE = 1u << 6, APPHIDE_READER = 1u << 7, APPHIDE_TERMINAL = 1u << 8,
   APPHIDE_FILES = 1u << 9, APPHIDE_SIGNAL = 1u << 10, APPHIDE_MENTIONS = 1u << 11,
   APPHIDE_MQTT = 1u << 12,   // Settings -> MQTT bridge (hidden by default: experimental + privacy)
@@ -52666,7 +52666,13 @@ static bool deviceImuRead(float* x, float* y, float* z) {
 #if defined(TLORA_PAGER)
   return pagerImuRead(x, y, z);
 #elif defined(HAS_M9_IMU)
-  return m9ImuRead(x, y, z);
+  // The M9's QMI8658 has +Z into the screen (measured, see the GPS Compass app),
+  // so lying face up reads z = -1 g. The checks below want +Z out of the screen,
+  // as the Pager reports it: turn the frame 180 degrees about X (#897).
+  if (!m9ImuRead(x, y, z)) return false;
+  *y = -*y;
+  *z = -*z;
+  return true;
 #else
   (void)x; (void)y; (void)z;
   return false;
@@ -54111,7 +54117,7 @@ static void lockHintText(char* out, size_t cap) {
 #elif defined(HAS_TDECK_PRO)
   // Pro/Max also define HAS_PAGER_KEYBOARD, but Backspace unlock is disabled
   // for them: GPIO0 is the deliberate unlock control.
-  const char* h = TR("press the button to unlock");
+  const char* h = TR("press the BOOT button to unlock");
 #elif defined(HAS_PAGER_KEYBOARD)
   const char* h = TR("hold Backspace to unlock");
 #elif defined(HAS_THINKNODE_M9)
@@ -56836,6 +56842,28 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
             }
             if (g_lv.task) g_lv.task->noteUserInput();
             return true;
+          }
+        }
+        // Send is the composer's right edge, and RIGHT off it was a dead press. It now
+        // reaches the conversation header, which opens the chat settings. Until now
+        // the header's only key path was Up through every message to the oldest, so a
+        // long thread's settings (Delete history, Delete chat) were out of reach from
+        // inside it. On the M9 an open chat always shows the header and never the
+        // gear (chat_hdr in the status-bar refresh); the gear is tried first only to
+        // keep the same pair, in the same order, as the Pager's hop past Send
+        // (pagerChatComposerNav). Both are in the focus group while they show: their
+        // visibility is part of navMaybeRebuild's signature.
+        if (LvChatPanel* chat = navOpenChatPanel();
+            chat && chat->send_btn && lv_obj_is_valid(chat->send_btn) && s_nav_group &&
+            lv_group_get_focused(s_nav_group) == chat->send_btn) {
+          for (lv_obj_t* bar : { g_statusbar.chan_gear, g_statusbar.chat_head }) {
+            if (bar && lv_obj_is_valid(bar) && !lv_obj_has_flag(bar, LV_OBJ_FLAG_HIDDEN) &&
+                lv_obj_get_group(bar) == s_nav_group) {
+              s_nav_show = true;
+              lv_group_focus_obj(bar);
+              if (g_lv.task) g_lv.task->noteUserInput();
+              return true;
+            }
           }
         }
         lv_obj_t* source_ta = navFocusedTextarea();
@@ -60989,11 +61017,14 @@ static void luaStoreTabCb(lv_event_t* e) {
   luaStoreRebuildList();
 }
 
-// "major.minor": a newer than b. Numeric per part, so 1.10 is newer than 1.9.
+// "major.minor[.patch]": a newer than b. Numeric per part, so 1.10 is newer than 1.9
+// and 1.1.1 newer than 1.1 (the Store badge missed patch releases such as Cyberspace 1.1.1).
 static bool luaVerNewer(const char* a, const char* b) {
-  int am = 0, an = 0, bm = 0, bn = 0;
-  if (sscanf(a, "%d.%d", &am, &an) < 1 || sscanf(b, "%d.%d", &bm, &bn) < 1) return strcmp(a, b) != 0;
-  return am != bm ? am > bm : an > bn;
+  int av[3] = {}, bv[3] = {};
+  if (sscanf(a, "%d.%d.%d", &av[0], &av[1], &av[2]) < 1 ||
+      sscanf(b, "%d.%d.%d", &bv[0], &bv[1], &bv[2]) < 1) return strcmp(a, b) != 0;
+  for (int k = 0; k < 3; k++) if (av[k] != bv[k]) return av[k] > bv[k];
+  return false;
 }
 static void luaStoreCountUpdates() {
   if (s_lua_cat_n <= 0 || !luaStoreTablesReady()) return;
@@ -61086,7 +61117,7 @@ static void luaStoreRebuildList() {
     struct { const char* name; uint32_t bit; } builtins[] = {
       { "Spectrum", APPHIDE_SPECTRUM }, { "Discover", APPHIDE_DISCOVER },
 #if !defined(HAS_TANMATSU)
-      { "VNC", APPHIDE_VNC }, { "Remote", APPHIDE_REMOTE },
+      { "Remote", APPHIDE_REMOTE },
 #endif
 #if defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
       { "Web", APPHIDE_READER },
@@ -61972,6 +62003,7 @@ static void openUsbFilesPage() {
 enum AppDrawerAction {
   APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
+  // APPACT_VNC has no tile since #908 (it opened Remote), but stays: Home App widgets store these numbers.
   APPACT_TERMINAL, APPACT_FILES, APPACT_FILE_TRANSFER, APPACT_SPECTRUM, APPACT_SNAKE, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
   APPACT_DISCOVER, APPACT_STORE,
   APPACT_USB_FILES,
@@ -61997,8 +62029,7 @@ static const AppTileDef k_app_tiles[] = {
   { UI_ICON_SQUARE_TERMINAL,    "Terminal",  APPACT_TERMINAL,  HUE_SYS },
 #endif
 #if !defined(HAS_TANMATSU) && CAP_SCREEN_MIRROR
-  { UI_ICON_MONITOR,            "Remote",    APPACT_REMOTE,    HUE_SYS },     // headless web-resolution UI
-  { UI_ICON_CAST,               "VNC",       APPACT_VNC,       HUE_SYS },     // browser screen mirror
+  { UI_ICON_MONITOR,            "Remote",    APPACT_REMOTE,    HUE_SYS },     // web console (incl. screen mirror) + Remote UI
 #endif
   { UI_ICON_SLIDERS_HORIZONTAL, "Settings",  APPACT_SETTINGS,  HUE_SYS },     // "!" when an update waits
 #if defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
@@ -62385,8 +62416,8 @@ static void appLaunch(int act, lv_event_t* e) {
     case APPACT_SPECTRUM:  openSpectrumPage();   return;   // swept RF spectrum analyzer (borrows the radio)
     case APPACT_DISCOVER:  openDiscoverPage();   return;   // active node-discovery sweep + nearby list
 #if !defined(HAS_TANMATSU)
-    case APPACT_VNC:       openRemotePage();     return;   // the screen mirror is now the web console's Screen tab
-    case APPACT_REMOTE:    openRemotePage();     return;   // reboot into the web-resolution headless UI
+    case APPACT_VNC:                                       // no tile since #908; the mirror is the web console's Screen tab
+    case APPACT_REMOTE:    openRemotePage();     return;   // web console switch, trusted browsers, Remote UI
 #endif
 #if defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
     case APPACT_READER:    openReaderPage();     return;   // on-device text browser (no proxy)
@@ -62509,13 +62540,12 @@ static bool isUiIconGlyph(const char* g) {
 // One launcher tile, as in the redesign: a rounded square tinted with its
 // category colour (no border), a line icon in that colour, the name underneath,
 // and a count pill over the top-right corner. The whole cell is the touch target.
-// A tool still running behind the launcher: a VNC viewer watching, a Remote
-// session, the USB file link. Its tile carries the redesign's live mark.
+// A tool still running behind the launcher: a browser watching the screen or a
+// Remote UI session, the USB file link. Its tile carries the redesign's live mark.
 static bool appTileLive(int act) {
   switch (act) {
 #if !defined(HAS_TANMATSU)
-    case APPACT_VNC:    return g_web_mirror.active() && !s_remote_mode;
-    case APPACT_REMOTE: return s_remote_mode;
+    case APPACT_REMOTE: return s_remote_mode || g_web_mirror.active();
 #endif
 #if CAP_USB_FILES
     case APPACT_USB_FILES: return g_usb_files_owns_serial;
@@ -62526,7 +62556,6 @@ static bool appTileLive(int act) {
 static uint32_t appTilesLiveMask() {
   uint32_t m = 0;
 #if !defined(HAS_TANMATSU)
-  if (appTileLive(APPACT_VNC))    m |= 1u;
   if (appTileLive(APPACT_REMOTE)) m |= 2u;
 #endif
 #if CAP_USB_FILES
@@ -62996,7 +63025,6 @@ static void openAppDrawer() {
       case APPACT_SNAKE:    return hide_mask & APPHIDE_SNAKE;
       case APPACT_SPECTRUM: return hide_mask & APPHIDE_SPECTRUM;
       case APPACT_DISCOVER: return hide_mask & APPHIDE_DISCOVER;
-      case APPACT_VNC:      return hide_mask & APPHIDE_VNC;
       case APPACT_REMOTE:   return hide_mask & APPHIDE_REMOTE;
       case APPACT_READER:   return hide_mask & APPHIDE_READER;
       case APPACT_TERMINAL: return hide_mask & APPHIDE_TERMINAL;
@@ -68021,8 +68049,9 @@ static bool hwAppInfo(const HwRec& r, HwAppInfo& out) {
     return false;
 #endif
   }
+  const int opt = r.opt == APPACT_VNC ? APPACT_REMOTE : r.opt;   // a VNC widget saved before #908
   for (const AppTileDef& t : k_app_tiles)
-    if (t.act == r.opt && t.act != APPACT_CMDCENTER) { out = { t.icon, TR(t.label), appTileColor(t.hue), t.act }; return true; }
+    if (t.act == opt && t.act != APPACT_CMDCENTER) { out = { t.icon, TR(t.label), appTileColor(t.hue), t.act }; return true; }
   return false;
 }
 static bool hwAppAvail(uint8_t opt) {
@@ -71429,6 +71458,26 @@ static void applyBootTheme() {
 // with the active palette, including stronger outlines and inverse knobs/checks
 // in HC. Reads COLOR_ACCENT after applyAccent has initialized it at boot.
 static void touchThemeApplyCb(lv_theme_t* /*th*/, lv_obj_t* obj) {
+#if CAP_EPAPER
+  // E-paper: a steady text cursor. LVGL blinks it every 400 ms, and on this
+  // panel each blink is a partial refresh -- the driver turns every 9th one into
+  // a full, flashing refresh, so a focused field flashed the whole screen every
+  // few seconds even with nobody typing. anim_time 0 = no blink (lv_textarea.c).
+  // Every state: the base theme puts its 400 ms on LV_PART_CURSOR | LV_STATE_FOCUSED,
+  // and a state-specific style outranks a plain LV_PART_CURSOR one, so setting only
+  // the default state left the cursor blinking exactly while it was shown.
+  if (lv_obj_check_type(obj, &lv_textarea_class)) {
+    static const lv_style_selector_t kCursorStates[] = {
+      LV_PART_CURSOR | LV_STATE_DEFAULT,
+      LV_PART_CURSOR | LV_STATE_FOCUSED,
+      LV_PART_CURSOR | LV_STATE_FOCUS_KEY,
+      LV_PART_CURSOR | LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY,
+      LV_PART_CURSOR | LV_STATE_EDITED,
+      LV_PART_CURSOR | LV_STATE_FOCUSED | LV_STATE_EDITED,
+    };
+    for (lv_style_selector_t sel : kCursorStates) lv_obj_set_style_anim_time(obj, 0, sel);
+  }
+#endif
 #if defined(HAS_TDECK_PRO)
   // E-paper: one bit per pixel, so black outlines on white, never tints.
   if (!s_theme_day && !s_theme_high_contrast) {
@@ -86555,14 +86604,15 @@ void UITask::loop() {
     uint8_t key_id = 0;
     if (display.takeFrontKeyPress(key_id)) {
       if (_manual_lock) {
-        // Front pads may reveal the retained lock view, but GPIO0 remains the
-        // deliberate unlock control. wakeScreen() would clear _manual_lock and
-        // leave the lock overlay stranded on screen.
-        if (_screen_off) lockscreenReveal();
-        if (key_id == 0) {
+        // Locked: the pads are inert, like the touchscreen and keyboard (a stray
+        // press in a pocket must not light the front-light or wake the panel).
+        // GPIO0 is the deliberate unlock control. The exception is the PIN
+        // screen, which only a GPIO0 press brings up: there the heart still
+        // toggles the front-light so the pad can be read.
+        if (s_pin_root && !_screen_off && key_id == 0) {
           if (s_max_frontlight_on) maxFrontlightOff(); else maxFrontlightOn();
+          notePinActivity();
         }
-        _last_input_ms = millis();
       } else if (key_id == 0) {
         if (_screen_off) wakeScreen();
         if (s_max_frontlight_on) maxFrontlightOff(); else maxFrontlightOn();

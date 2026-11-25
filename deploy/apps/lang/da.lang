@@ -1,0 +1,2527 @@
+# wadamesh language file
+# canonical source - translators: edit this file and PR it
+# code: da
+# ver: 34
+# name: Dansk
+# base: en
+# translators: chmadkk (GitHub)
+ (device behind)	 (enheden er bagud)
+#7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d dækningspunkter · %lu gemt på SD#
+#7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: venter på GPS-fix…#
+#7A7F87 Wardrive: …#	#7A7F87 Wardrive: …#
+#region	#region
+%.3f MHz · SF%u · TX %+ddBm	%.3f MHz · SF%u · TX %+ddBm
+%d on map	%d på kortet
+%s · %d nearby (%d rpt, %d comp)	%s · %d i nærheden (%d rpt, %d komp)
+%u types · hops %u · manual %s	%u typer · hop %u · manuel %s
+(RTC unset)	(RTC ikke sat)
+(device behind)	(enheden er bagud)
+(no default)	(ingen standard)
+0123456789abcdef…	0123456789abcdef…
+1 byte (legacy)\n2 bytes\n3 bytes	1 byte (ældre)\n2 bytes\n3 bytes
+100\n250\n500\n1000\n2000\nNo limit	100\n250\n500\n1000\n2000\nIngen grænse
+12-hour clock	12-timers ur
+32 hex characters	32 hex-tegn
+32-hex secret. Anyone with this can read the channel.	32-hex-hemmelighed. Alle der har den, kan læse kanalen.
+>_  Terminal	>_  Terminal
+@  Mentions	@  Omtaler
+@ mention sound	@-omtale lyd
+A background has to be a JPEG	En baggrund skal være en JPEG
+AF	AF
+AUTOMATIC ADVERTS	AUTOMATISKE ADVERTS
+About	Om
+About the map	Om kortet
+Accent popups	Accent-popups
+Accent popups: off	Accent-popups: fra
+Accent popups: on	Accent-popups: til
+Background	Baggrund
+Background colour	Baggrundsfarve
+Background set, it shows after a restart	Baggrund sat, den vises efter genstart
+Check position every	Tjek position hver
+Choose an image	Vælg et billede
+Choose the colour	Vælg farven
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Eksperimentel. Sænker processoren mens skærmen er slukket (Bluetooth og Wi-Fi virker stadig), lader GPS'en hvile mellem positionstjek og holder en bevægelig baggrund stille.
+GPS: resting, next check in %lum%02lus	GPS: hviler, næste tjek om %lum%02lus
+Image	Billede
+Moving aurora	Bevægeligt nordlys
+None	Ingen
+Open a JPEG, then tap 'Set as background'	Åbn en JPEG, og tryk så 'Brug som baggrund'
+Save battery	Spar batteri
+Set as background	Brug som baggrund
+Still aurora	Stille nordlys
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	GPS'en hviler mellem positionstjek og vågner af sig selv. Den holdes vågen, mens kortet, denne side eller Discover er åben. Batterisparing slår også dette til.
+remote view open	fjernvisning åben
+Accent colour	Accentfarve
+Appearance	Udseende
+Condense Nav (restart to apply)	Kompakt navigation (genstart for at anvende)
+Condense Nav saved — restart to apply	Kompakt navigation gemt — genstart for at anvende
+Day	Dag
+High contrast	Høj kontrast
+High contrast - restarting to apply it…	Høj kontrast - genstarter for at anvende…
+Keyboard nav: on	Tastaturnavigation: til
+Landscape only	Kun liggende
+Letters move the highlight when no text field is focused. Enter selects; hold Backspace to go back.	Bogstaver flytter markeringen, når intet tekstfelt er valgt. Enter vælger; hold Backspace for at gå tilbage.
+Night	Nat
+Theme save failed	Kunne ikke gemme tema
+Ack	Kvit
+Active	Aktiv
+Add	Tilføj
+Add channel	Tilføj kanal
+Add contact	Tilføj kontakt
+Added	Tilføjet
+Added to contacts	Tilføjet til kontakter
+Added to favorites	Tilføjet til favoritter
+Admin	Admin
+Advert	Advert
+Advert failed	Advert fejlede
+Advert location	Advert-position
+Advert policy saved	Advert-politik gemt
+Advert sent	Advert sendt
+All marked read	Alle markeret som læst
+Already exists	Findes allerede
+Already exists or table full.	Findes allerede, eller tabellen er fuld.
+Already in contacts	Allerede i kontakter
+Always starts on the on-board antenna after a reboot. Only pick External with an antenna fitted to the external socket.	Starter altid på den indbyggede antenne efter genstart. Vælg kun Ekstern, hvis der sidder en antenne i det eksterne stik.
+Analyzing terrain…	Analyserer terræn…
+Analyzing terrain…\n(retry %d of 3)	Analyserer terræn…\n(forsøg %d af 3)
+Answer telemetry requests	Besvar telemetri-forespørgsler
+Anyone can join. Key is derived from the hashtag (lowercase).	Alle kan deltage. Nøglen afledes af hashtagget (små bogstaver).
+App drawer as home	App-skuffe som startskærm
+App icon size	App-ikonstørrelse
+Applies after restart.	Anvendes efter genstart.
+Apply	Anvend
+Apply auto-poll	Anvend auto-polling
+Apply radio params	Anvend radioparametre
+Apps	Apps
+Arrows + Enter always work. These letters are extra — tap a row, then press a key.	Pile + Enter virker altid. Disse bogstaver er ekstra — tryk på en række, og tryk så på en tast.
+Auto advert	Auto-advert
+Auto chat	Auto-chat
+Auto repeater	Auto-repeater
+Auto room	Auto-rum
+Auto sensor	Auto-sensor
+Auto-Join	Auto-deltag
+Auto-add	Auto-tilføj
+Auto-add contacts	Auto-tilføj kontakter
+Auto-add saved	Auto-tilføj gemt
+Auto-add settings	Auto-tilføj-indstillinger
+Auto-delete above hops	Auto-slet over antal hop
+Auto-delete oldest	Auto-slet ældste
+Auto-delete oldest makes room when full. Hops: 0 = keep all; nodes heard via more hops are removed.	Auto-slet ældste giver plads, når der er fuldt. Hop: 0 = behold alle; noder hørt via flere hop fjernes.
+Auto-discover	Auto-opdag
+Auto-discover off	Auto-opdag fra
+Auto-discover on	Auto-opdag til
+Auto-poll every	Auto-poll hver
+Auto-refresh off	Auto-opdatering fra
+Auto-refresh on	Auto-opdatering til
+Available	Tilgængelig
+BLE off	BLE fra
+BLE on	BLE til
+BT	BT
+Back	Tilbage
+Backups	Sikkerhedskopier
+Battery	Batteri
+Battery & power history	Batteri- og strømhistorik
+Battery (V)	Batteri (V)
+Battery calibration reset to default	Batterikalibrering nulstillet til standard
+Battery read too low — charge fully first	Batteriet læser for lavt — oplad helt først
+Battery saver (experimental)	Batterisparing (eksperimentel)
+Battery — last 24h	Batteri — seneste 24 t
+Battery:	Batteri:
+Block	Bloker
+Block list full	Blokeringslisten er fuld
+Blocked list	Blokeringsliste
+Blocked users	Blokerede brugere
+Blocked — their messages are hidden	Blokeret — deres beskeder er skjult
+Blocking unsupported	Blokering understøttes ikke
+Blue battery  Last 6 min	Blå batteri  Seneste 6 min
+Blue battery  Orange temp  Cyan humidity	Blå batteri  Orange temp  Cyan fugt
+Bluetooth	Bluetooth
+Bluetooth already off	Bluetooth er allerede slukket
+Bluetooth already on	Bluetooth er allerede tændt
+Bluetooth deferred; retry from Settings	Bluetooth udskudt; prøv igen fra Indstillinger
+Bluetooth off	Bluetooth fra
+Bluetooth on	Bluetooth til
+Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Bluetooth-parring er ikke tilgængelig på denne enhed.\n\nRadiochippens fabriksfirmware understøtter det ikke.\n\nPar telefon-appen over Wi-Fi i stedet: forbind enheden til dit netværk, og tilføj den så i appen med dens IP-adresse (TCP, port 5000) — vist under Indstillinger > Netværk. USB virker også.
+Bluetooth unavailable; retry from Settings	Bluetooth utilgængelig; prøv igen fra Indstillinger
+Bluetooth will start after Wi-Fi connects or times out.	Bluetooth starter, når Wi-Fi har forbundet eller er udløbet.
+Broker host / IP	Broker-vært / IP
+Buffered receive (experimental)	Bufferet modtagelse (eksperimentel)
+Built-in	Indbygget
+Built-in (default)	Indbygget (standard)
+Default	Standard
+CR	CR
+Calibrate battery (full = 100%)	Kalibrer batteri (fuld = 100%)
+Calibrated: 100%% = %u.%02u V  (long-press to reset)	Kalibreret: 100%% = %u.%02u V  (langt tryk for at nulstille)
+Can't block — not a contact	Kan ikke blokere — ikke en kontakt
+Can't display image\n(JPEG only, <= 1024 px)	Kan ikke vise billedet\n(kun JPEG, <= 1024 px)
+Cancel	Annuller
+Cancelled	Annulleret
+Cannot open file	Kan ikke åbne filen
+Catalog unavailable	Katalog utilgængeligt
+Centered on %s	Centreret på %s
+Changing orientation - rebooting...	Skifter orientering - genstarter...
+Channel created	Kanal oprettet
+Channel joined	Kanal tilsluttet
+Channel name	Kanalnavn
+Channel not found	Kanal ikke fundet
+Channel removed	Kanal fjernet
+Channel scope saved	Kanalomfang gemt
+Channel settings	Kanalindstillinger
+Channel table is full	Kanaltabellen er fuld
+Channel table is full.	Kanaltabellen er fuld.
+Channel-specific regions can be set in each channel's settings.	Kanalspecifikke regioner kan sættes i hver kanals indstillinger.
+Channels:	Kanaler:
+Chat bubbles	Chatbobler
+Chat bubbles: plain	Chatbobler: enkle
+Chat history is NOT saving	Chathistorikken bliver IKKE gemt
+Chat history save FAILED	Gemning af chathistorik FEJLEDE
+Chat icon	Chatikon
+Chat icon reset to letters	Chatikon nulstillet til bogstaver
+Chat icon set	Chatikon sat
+Chat removed	Chat fjernet
+Chat save fallback (failed tries)	Reserve for chatgemning (mislykkede forsøg)
+Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen.	Chats, kontakter, indstillinger og en mesh-terminal - alt i browseren. Ingen genstart; enheden beholder sin normale skærm.
+Choose .wav from files	Vælg .wav fra filer
+Choose your name	Vælg dit navn
+Choose your region	Vælg din region
+Clear	Ryd
+Clear battery history?	Ryd batterihistorik?
+Clear history	Ryd historik
+Clear telemetry history for this node?	Ryd telemetrihistorik for denne node?
+Client repeat	Klient-gentagelse
+Clipboard empty	Udklipsholderen er tom
+Clock & time	Ur og tid
+Clock synced	Ur synkroniseret
+Clock: 12-hour	Ur: 12-timer
+Clock: 24-hour	Ur: 24-timer
+Close	Luk
+Colourful chat bubbles	Farverige chatbobler
+Commands	Kommandoer
+Community Preset	Fællesskabsforvalg
+Community preset (meshcomod web)	Fællesskabsforvalg (meshcomod web)
+Compact	Kompakt
+Compact messages	Kompakte beskeder
+Compact messages (IRC style)	Kompakte beskeder (IRC-stil)
+Connect	Forbind
+Connect Wi-Fi to reload tiles	Forbind Wi-Fi for at genindlæse kortfliser
+Connect to Wi-Fi	Forbind til Wi-Fi
+Connect to Wi-Fi first	Forbind til Wi-Fi først
+Connect to Wi-Fi first, then try again.	Forbind til Wi-Fi først, og prøv så igen.
+Connect to Wi-Fi to get a browser address.	Forbind til Wi-Fi for at få en browseradresse.
+Connected	Forbundet
+Connected - a browser is viewing this screen.	Forbundet - en browser ser denne skærm.
+Connecting...	Forbinder...
+Connecting…	Forbinder…
+Console not available on this build	Konsollen er ikke tilgængelig i denne build
+Contact added	Kontakt tilføjet
+Contact deleted	Kontakt slettet
+Contact gone	Kontakt væk
+Contact missing	Kontakt mangler
+Contact shared	Kontakt delt
+Contacts	Kontakter
+Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Kontakter ligger i intern flash - SD-kortet blev ikke monteret ved opstart. Sæt kortet i igen, og genstart.
+Contacts are on internal flash.	Kontakter ligger i intern flash.
+Contacts are saved to the SD card.	Kontakter gemmes på SD-kortet.
+Contacts full	Kontakter fulde
+Contacts:	Kontakter:
+Control	Styring
+Control this device from a browser	Styr denne enhed fra en browser
+Copied %s	Kopierede %s
+Copied - Paste in a folder	Kopieret - Indsæt i en mappe
+Copy	Kopier
+Copy blocked: SD card holds a different or unreadable profile	Kopiering blokeret: SD-kortet har en anden eller ulæselig profil
+Copy blocked: SD profile could not be prepared safely	Kopiering blokeret: SD-profilen kunne ikke forberedes sikkert
+Copy blocked: internal data is busy	Kopiering blokeret: interne data er optaget
+Copy blocked: migration guard unavailable	Kopiering blokeret: migreringsvagt utilgængelig
+Copy failed (no internal identity)	Kopiering fejlede (ingen intern identitet)
+Copy incomplete: SD data may be mixed. Retry before reboot.	Kopiering ufuldstændig: SD-data kan være blandet. Prøv igen før genstart.
+Copy internal data to SD	Kopier interne data til SD
+Copy only missing internal files to a matching SD profile,\nkeep existing SD data, then reboot?	Kopier kun manglende interne filer til en matchende SD-profil,\nbehold eksisterende SD-data, og genstart så?
+Copy secret	Kopier hemmelighed
+Copying internal data to SD...	Kopierer interne data til SD...
+Copying internal data to SD...\nThis may take a few minutes; keep powered.	Kopierer interne data til SD...\nDet kan tage et par minutter; hold strømmen tilsluttet.
+Could not add	Kunne ikke tilføje
+Could not save the crash report	Kunne ikke gemme nedbrudsrapporten
+Couldn't delete	Kunne ikke slette
+Couldn't fetch terrain data.\nCheck the connection and the\nelevation server, then\ntry again.	Kunne ikke hente terrændata.\nTjek forbindelsen og\nhøjdeserveren, og\nprøv igen.
+Couldn't save the name to storage	Kunne ikke gemme navnet
+Couldn't send login	Kunne ikke sende login
+Couldn't start the analyzer.\nTry again.	Kunne ikke starte analysatoren.\nPrøv igen.
+Crash export failed	Eksport af nedbrud fejlede
+Create	Opret
+Create QR	Opret QR
+Create a private channel	Opret en privat kanal
+Create failed	Oprettelse fejlede
+Create private channel	Opret privat kanal
+Current tile transfer is busy - retry	Den aktuelle flise-overførsel er optaget - prøv igen
+Custom UTC offset (hours)	Tilpasset UTC-forskydning (timer)
+Cut	Klip
+Cut - Paste in a folder	Klippet - Indsæt i en mappe
+DM sound	DM-lyd
+DND	Forstyr ikke
+Danger zone	Farezone
+Data -> SD card on reboot\n(card must be inserted)	Data -> SD-kort ved genstart\n(kortet skal sidde i)
+Data -> internal on reboot	Data -> intern ved genstart
+Delete	Slet
+Delete %d contact(s)?	Slet %d kontakt(er)?
+Delete chat	Slet chat
+Delete chat with "%s"?\nMessage history will be cleared.	Slet chat med "%s"?\nBeskedhistorikken ryddes.
+Delete failed	Sletning fejlede
+Delete history	Slet historik
+Delete this backup file?\nThis cannot be undone.	Slet denne sikkerhedskopi?\nDet kan ikke fortrydes.
+Delete this chat's entire history?\nThe chat itself stays.	Slet hele denne chats historik?\nSelve chatten bliver.
+Deleted	Slettet
+Deleted %d	Slettede %d
+Deleted %d messages	Slettede %d beskeder
+Deleting contacts	Sletter kontakter
+Delivered	Leveret
+Detailed sensors	Detaljerede sensorer
+Device clock differs from "%s" by %lu h%s	Enhedens ur afviger fra "%s" med %lu t%s
+Device clock differs from "%s" by %lu min%s	Enhedens ur afviger fra "%s" med %lu min%s
+Device name hidden	Enhedsnavn skjult
+Device name shown	Enhedsnavn vist
+Device time:	Enhedens tid:
+Diagnostics	Diagnostik
+Diagnostics are on the About page.	Diagnostik findes på Om-siden.
+Discovered	Opdaget
+Discovered settings	Opdagede indstillinger
+Display	Skærm
+Display name	Visningsnavn
+Distance in miles	Afstand i miles
+Distance: km	Afstand: km
+Distance: miles	Afstand: miles
+Do Not Disturb	Forstyr ikke
+Do Not Disturb off	Forstyr ikke fra
+Do Not Disturb on	Forstyr ikke til
+Down	Ned
+Download failed	Download fejlede
+Download failed (network?)	Download fejlede (netværk?)
+Download mode	Download-tilstand
+Download mode… reflash over USB	Download-tilstand… flash igen over USB
+Downloaded - tap Use to switch	Downloadet - tryk Brug for at skifte
+Downloading map tiles…\n\nKeep Wi-Fi connected.\nTiles appear as they arrive\nand are saved for offline use.	Downloader kortfliser…\n\nHold Wi-Fi forbundet.\nFliserne vises, efterhånden som de kommer,\nog gemmes til offline brug.
+Downloading…	Downloader…
+Duty meter	Duty-måler
+Edge scroll	Kant-scroll
+Edit in Settings → Quick replies	Rediger i Indstillinger → Hurtige svar
+Editing	Redigerer
+Empty = plaintext to a private broker	Tom = klartekst til en privat broker
+Empty file	Tom fil
+Enable Bluetooth	Slå Bluetooth til
+Enable MQTT bridge	Slå MQTT-bro til
+Enable only if your repeater re-floods just one region. Otherwise leave off — it can block cross-region login/DMs.	Slå kun til, hvis din repeater kun genudsender én region. Ellers lad den være slået fra — den kan blokere login/DM'er på tværs af regioner.
+Enable web access	Slå webadgang til
+Encryption key (optional)	Krypteringsnøgle (valgfri)
+End time	Sluttid
+Enter SSID first	Indtast SSID først
+Enter a name	Indtast et navn
+Enter a network name	Indtast et netværksnavn
+Enter a region name	Indtast et regionsnavn
+Enter a rough location first	Indtast først en omtrentlig position
+Enter adds a new line	Enter laver en ny linje
+Enter exactly 32 hex characters.	Indtast præcis 32 hex-tegn.
+Enter key sends message	Enter-tasten sender beskeden
+Enter sends messages	Enter sender beskeder
+Enter the 32-hex secret shared by the channel creator.	Indtast den 32-hex-hemmelighed, som kanalens opretter har delt.
+Entering remote mode - rebooting...	Går i fjerntilstand - genstarter...
+Erase all	Slet alt
+Erases identity, contacts, channels, messages, Wi-Fi and all settings, then reboots.	Sletter identitet, kontakter, kanaler, beskeder, Wi-Fi og alle indstillinger, og genstarter så.
+Erasing everything…	Sletter alt…
+Every node you talk to must match. You can change this later in Settings.	Alle noder, du taler med, skal matche. Du kan ændre det senere i Indstillinger.
+Expansion Kit	Udvidelsessæt
+Experimental	Eksperimentel
+Experimental - has known issues. Off = soft mouse cursor.	Eksperimentel - har kendte problemer. Fra = blød musemarkør.
+Experimental saved	Eksperimentel gemt
+Export failed (can't open file)	Eksport fejlede (kan ikke åbne filen)
+Export new backup	Eksporter ny sikkerhedskopi
+Export settings	Eksporter indstillinger
+Exporting settings…	Eksporterer indstillinger…
+External antenna selected	Ekstern antenne valgt
+Factory reset	Nulstil til fabrik
+Factory reset blocked: SD activity is still running; close tools and retry.	Fabriksnulstilling blokeret: SD-aktivitet kører stadig; luk værktøjer og prøv igen.
+Factory reset blocked: storage is busy	Fabriksnulstilling blokeret: lageret er optaget
+Factory reset incomplete: SD data may already be partially erased. Retry to finish, or remove the card before resetting internal data.	Fabriksnulstilling ufuldstændig: SD-data kan allerede være delvist slettet. Prøv igen for at gøre det færdigt, eller tag kortet ud før interne data nulstilles.
+Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone.	Nulstil til fabrik?\n\nSletter identitet, kontakter,\nkanaler, beskeder, Wi-Fi\nog alle indstillinger. Det\nkan ikke fortrydes.
+Failed to save channel.	Kunne ikke gemme kanalen.
+Favorites full (max %d)	Favoritter fulde (maks %d)
+Favorites unsupported	Favoritter understøttes ikke
+Fetching the app list from firmware.wadamesh.com	Henter app-listen fra firmware.wadamesh.com
+Files	Filer
+Find	Find
+Finish	Afslut
+Firmware beta_%d\nCouldn't reach the update server	Firmware beta_%d\nKunne ikke nå opdateringsserveren
+Firmware:	Firmware:
+Flash on new message	Blink ved ny besked
+Flood	Flood
+Flood advert sent	Flood-advert sendt
+Flood every	Flood hver
+Flood: relayed across the mesh (multi-hop).\nZero-hop: neighbours only (no relaying).	Flood: videresendt gennem meshet (flere hop).\nNul-hop: kun naboer (ingen videresendelse).
+Folder created	Mappe oprettet
+For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder).	Til Launcher-installationer: gemmer den nyeste firmware fra den valgte kanal på SD-kortet (mappen BINS).
+Forget network	Glem netværk
+Format	Formater
+Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased.	Formater SD som MESHCOMOD (FAT32)?\nAlle data på kortet slettes.
+Format failed (no card / SD error)	Formatering fejlede (intet kort / SD-fejl)
+Frequency / bandwidth	Frekvens / båndbredde
+Full	Fuld
+GPS	GPS
+GPS %s · Buzzer %s	GPS %s · Summer %s
+GPS %s · Buzzer %s\n%s	GPS %s · Summer %s\n%s
+GPS off	GPS fra
+GPS on	GPS til
+GPS serial baud	GPS seriel baud
+GPS sets the position while it has a fix	GPS sætter positionen, mens den har et fix
+GPS unset	GPS ikke sat
+GPS: acquiring...	GPS: finder...
+GPS: fix	GPS: fix
+GPS: off	GPS: fra
+GPS: searching	GPS: søger
+Game over  —  score %d   (tap to restart)	Spillet er slut  —  point %d   (tryk for at starte igen)
+General	Generelt
+Get	Hent
+Get Started	Kom i gang
+Get test builds (beta)	Hent testversioner (beta)
+Go	Gå
+Green pressure  Gray altitude	Grøn tryk  Grå højde
+Hashtag name	Hashtag-navn
+Hidden - turn it back on in the Lua Store	Skjult - slå den til igen i Lua Store
+Hidden network	Skjult netværk
+Hide	Skjul
+Hide device name	Skjul enhedsnavn
+Hide this app from the drawer?	Skjul denne app fra skuffen?
+High-gain receiver (FEM LNA)	Højforstærknings-modtager (FEM LNA)
+Highly experimental. This forwards the text, sender name and timestamp of every message your node receives to an MQTT broker, where anyone able to read the broker can read them. Direct messages are private messages from other people who never agreed to be shared. Use a broker you control, set an encryption key below, and never a public broker.	Meget eksperimentel. Dette videresender teksten, afsenderens navn og tidsstemplet for hver besked, din node modtager, til en MQTT-broker, hvor alle der kan læse brokeren, kan læse dem. Direkte beskeder er private beskeder fra andre, som aldrig har sagt ja til at blive delt. Brug en broker, du selv styrer, sæt en krypteringsnøgle nedenfor, og brug aldrig en offentlig broker.
+History limit off	Historikgrænse fra
+Home	Hjem
+Hotkey saved	Genvejstast gemt
+How you'll appear to other nodes. You can change this later in Settings.	Sådan vises du for andre noder. Du kan ændre det senere i Indstillinger.
+Humidity	Fugtighed
+I accept the privacy risk	Jeg accepterer privatlivsrisikoen
+Identity (public key)	Identitet (offentlig nøgle)
+Idle power-save	Strømsparing ved inaktivitet
+Idle sleep disabled	Dvale ved inaktivitet slået fra
+Idle sleep enabled	Dvale ved inaktivitet slået til
+Image too large (>4 MB)	Billedet er for stort (>4 MB)
+Import	Importer
+Import backup	Importer sikkerhedskopi
+Import failed (bad/unreadable JSON)	Import fejlede (ugyldig/ulæselig JSON)
+Import failed: internal storage unavailable. Identity, channels and contacts were not saved.	Import fejlede: internt lager utilgængeligt. Identitet, kanaler og kontakter blev ikke gemt.
+Import settings	Importer indstillinger
+Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots.	Importer denne sikkerhedskopi?\nErstatter identitet,\nkanaler og kontakter,\nog genstarter så.
+Import: storage unavailable	Import: lager utilgængeligt
+Importing settings…	Importerer indstillinger…
+Inactive	Inaktiv
+Info	Info
+Insert emoji / symbol	Indsæt emoji / symbol
+Install	Installer
+Install a previous version	Installer en tidligere version
+Install an earlier version	Installer en ældre version
+Install failed (network?)	Installation fejlede (netværk?)
+Install update	Installer opdatering
+Installed	Installeret
+Installing…	Installerer…
+Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)	Intern (indbygget)\nEkstern (MMCX)\nAuto (ældre, pr. sending)
+Internal has no folders	Internt lager har ingen mapper
+Internal storage   %s / %s	Internt lager   %s / %s
+Invalid lat/lon	Ugyldig breddegrad/længdegrad
+Invalid max hops	Ugyldigt maks. antal hop
+Invalid radio values	Ugyldige radioværdier
+Join	Deltag
+Join a hashtag channel	Deltag i en hashtag-kanal
+Join a private channel	Deltag i en privat kanal
+Join hashtag channel	Deltag i hashtag-kanal
+Join network	Forbind til netværk
+Join private channel	Deltag i privat kanal
+Join the public channel	Deltag i den offentlige kanal
+Joined %.40s	Deltog i %.40s
+Keep per chat (messages)	Behold pr. chat (beskeder)
+Key already in use	Nøglen er allerede i brug
+Keyboard	Tastatur
+Keyboard backlight	Tastaturbelysning
+Keyboard light auto	Tastaturlys auto
+Keyboard light off	Tastaturlys fra
+Keyboard light on	Tastaturlys til
+Keyboard nav: WASDZ on	Tastaturnavigation: WASDZ til
+Keyboard nav: off	Tastaturnavigation: fra
+Keyboard navigation	Tastaturnavigation
+Keys	Nøgler
+Known regions	Kendte regioner
+LOS → %s	LOS → %s
+Landscape (desktop)	Liggende (desktop)
+Landscape set - applies when remote mode starts.	Liggende sat - anvendes, når fjerntilstand starter.
+Language	Sprog
+Language catalog unavailable - check Wi-Fi, then reopen this tab.	Sprogkataloget er utilgængeligt - tjek Wi-Fi, og åbn fanen igen.
+Language updated - restarting to apply it…	Sprog opdateret - genstarter for at anvende…
+Languages	Sprog
+Large (bigger icons)	Stor (større ikoner)
+Latitude	Breddegrad
+Leave empty if not required	Lad stå tom, hvis det ikke kræves
+Leaving remote mode - rebooting...	Forlader fjerntilstand - genstarter...
+Left	Venstre
+Let's set up your device.\n\nYou'll pick a name and choose your LoRa region. Takes about a minute.	Lad os sætte din enhed op.\n\nDu vælger et navn og din LoRa-region. Det tager cirka et minut.
+Letters only	Kun bogstaver
+LoRa antenna (P4)	LoRa-antenne (P4)
+Loading catalog…	Indlæser katalog…
+Loading map tiles…\n\nKeep Wi-Fi connected.\nTiles appear as they arrive.	Indlæser kortfliser…\n\nHold Wi-Fi forbundet.\nFliserne vises, efterhånden som de kommer.
+Loading map…	Indlæser kort…
+Loading the language catalog…	Indlæser sprogkataloget…
+Loading...	Indlæser...
+Local every	Lokal hver
+Local sensors	Lokale sensorer
+Lock	Lås
+Lock screen	Låseskærm
+Lock screen wallpaper	Låseskærmens baggrund
+Lock text colour	Låsetekstens farve
+Lock text colour set	Låsetekstens farve sat
+Lock wallpaper	Låsebaggrund
+Lock wallpaper set	Låsebaggrund sat
+Lock when screen off	Lås når skærmen slukkes
+Locking…	Låser…
+Locks when screen off\n(hold Backspace to unlock)	Låser når skærmen slukkes\n(hold Backspace for at låse op)
+Locks when screen off\n(double-press d-pad center to unlock)	Låser når skærmen slukkes\n(dobbelttryk midt på d-pad for at låse op)
+Locks when screen off\n(hold the trackball to unlock)	Låser når skærmen slukkes\n(hold trackballen for at låse op)
+Locks when screen off\n(press Volume Down to unlock)	Låser når skærmen slukkes\n(tryk Lydstyrke ned for at låse op)
+Locks when screen off\n(press the button to unlock)	Låser når skærmen slukkes\n(tryk på knappen for at låse op)
+Locks when screen off\n(hold the wake button to unlock)	Låser når skærmen slukkes\n(hold vækkeknappen for at låse op)
+Log in again	Log ind igen
+Logging in again...	Logger ind igen...
+Logging in…	Logger ind…
+Login OK (perms %u)	Login OK (rettigheder %u)
+Login failed	Login fejlede
+Logs	Logfiler
+Longitude	Længdegrad
+MHz	MHz
+MQTT bridge	MQTT-bro
+Map	Kort
+Map options	Kortindstillinger
+Map storage error.\nReflash the tiles partition.	Fejl i kortlageret.\nFlash flise-partitionen igen.
+Map storage error.\n\nSD card detected but the\ntile cache didn't mount.\nReboot to retry.	Fejl i kortlageret.\n\nSD-kort fundet, men\nflise-cachen blev ikke monteret.\nGenstart for at prøve igen.
+Map tiles: microSD	Kortfliser: microSD
+Map tiles: microSD\n\n/maps/osm/z/x/y.png\n(or /tiles/z/x/y.jpg)\n\nMap appears when a tile\nfor this area is found.	Kortfliser: microSD\n\n/maps/osm/z/x/y.png\n(eller /tiles/z/x/y.jpg)\n\nKortet vises, når der findes\nen flise for området.
+Map tiles: server	Kortfliser: server
+Map — no tile pack on SPIFFS yet.\n\nUpload a tile pack to /tiles/<z>/<x>/<y>.jpg with the host-side generator.	Kort — ingen flisepakke på SPIFFS endnu.\n\nUpload en flisepakke til /tiles/<z>/<x>/<y>.jpg med generatoren på computeren.
+Map — set your location\nin Settings → Profile to\nshow the map here.	Kort — sæt din position\ni Indstillinger → Profil for\nat vise kortet her.
+Mark all chats and channels as read?	Marker alle chats og kanaler som læst?
+Mark as read	Marker som læst
+Mark read	Marker læst
+Marked read	Markeret læst
+Max hops (0..64)	Maks. hop (0..64)
+Max zoom for this pack	Maks. zoom for denne pakke
+Memory detail	Hukommelsesdetaljer
+Mesh health: a flood advert is rebroadcast by every repeater in range, so frequent floods add airtime for the whole network. Keep them infrequent (a day or more). Your neighbours still see you from zero-hop adverts and your message replies, so flood mainly when distant nodes need to rediscover you. Leave both Off to advertise only when you tap the buttons above.	Mesh-sundhed: en flood-advert genudsendes af alle repeatere inden for rækkevidde, så hyppige floods giver mere sendetid for hele netværket. Hold dem sjældne (en dag eller mere). Dine naboer ser dig stadig via nul-hop-adverts og dine svar på beskeder, så flood primært når fjerne noder skal finde dig igen. Lad begge være Fra for kun at advertise, når du trykker på knapperne ovenfor.
+Message	Besked
+Message LED	Beskeds-LED
+Message LED off	Beskeds-LED fra
+Message LED on	Beskeds-LED til
+Message deleted	Besked slettet
+Message didn't get through.\nResend it?	Beskeden kom ikke igennem.\nSend den igen?
+Message info	Beskedinfo
+Message sound	Beskedlyd
+Messages	Beskeder
+Min zoom for this pack	Min. zoom for denne pakke
+Mode: BLE starting / low memory	Tilstand: BLE starter / lidt hukommelse
+Model:	Model:
+Move the map to your spot	Flyt kortet til dit sted
+Multi ACKs	Multi-ACK'er
+Multi-ack %s · Repeat %s · RX boost %s	Multi-ack %s · Gentag %s · RX-boost %s
+Multi-byte routing (path hash)	Multi-byte-routing (sti-hash)
+Mute @	Slå @ fra
+Mute msgs	Slå beskeder fra
+Mute notification sound	Slå notifikationslyd fra
+My position (no GPS fix)	Min position (intet GPS-fix)
+Name	Navn
+Name can't be empty.	Navnet kan ikke være tomt.
+Name fragment	Navnefragment
+Name saved	Navn gemt
+Navigation keys	Navigationstaster
+Navigation keys — tap a row, then press a key	Navigationstaster — tryk på en række, og tryk så på en tast
+Nearby on map	I nærheden på kortet
+POI	POI
+Network name	Netværksnavn
+Network name (SSID)	Netværksnavn (SSID)
+New	Ny
+New DM	Ny DM
+New channel msg	Ny kanalbesked
+New contact	Ny kontakt
+New file	Ny fil
+New folder	Ny mappe
+New game	Nyt spil
+New room msg	Ny rumbesked
+Next	Næste
+Night mode (invert)	Nattilstand (inverter)
+No .json backups found.\nExport one first, or copy a\nmeshcore-backup.json to the\nSD card or internal flash.	Ingen .json-sikkerhedskopier fundet.\nEksporter en først, eller kopier en\nmeshcore-backup.json til\nSD-kortet eller intern flash.
+No @mentions yet	Ingen @omtaler endnu
+No Bluetooth on this device	Ingen Bluetooth på denne enhed
+No DM key	Ingen DM-nøgle
+No GPS module on this device.	Intet GPS-modul på denne enhed.
+No JPEGs found in /lock/.\nAdd images via the file\nmanager or an SD card.	Ingen JPEG'er fundet i /lock/.\nTilføj billeder via\nfilhåndteringen eller et SD-kort.
+No SD card	Intet SD-kort
+No SD card (or unreadable format)	Intet SD-kort (eller ulæseligt format)
+No backups yet. Tap Export new backup above to create one.	Ingen sikkerhedskopier endnu. Tryk Eksporter ny sikkerhedskopi ovenfor for at lave en.
+No battery history yet.\n\nLogged every 5 minutes.	Ingen batterihistorik endnu.\n\nLogges hvert 5. minut.
+No blocked users.\n\nLong-press a message and tap\nBlock to add one.	Ingen blokerede brugere.\n\nTryk længe på en besked, og tryk\nBloker for at tilføje en.
+No contact for thread	Ingen kontakt for tråden
+No contact to trace	Ingen kontakt at spore
+No contacts have shared\na GPS location yet.	Ingen kontakter har delt\nen GPS-position endnu.
+No discovered nodes yet.\n\nAnything heard over the air that isn't in your contacts will show up here. When auto-add is off, you can manually add nodes to your contacts.	Ingen opdagede noder endnu.\n\nAlt, der høres i luften og ikke er i dine kontakter, vises her. Når auto-tilføj er slået fra, kan du selv tilføje noder til dine kontakter.
+No earlier versions yet	Ingen tidligere versioner endnu
+No internal storage: identity, channels and contacts can't be saved.	Intet internt lager: identitet, kanaler og kontakter kan ikke gemmes.
+No local expansion data	Ingen lokale udvidelsesdata
+No location for this contact	Ingen position for denne kontakt
+No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Intet kortlager.\n\nSæt et SD-kort i for at gemme\nWi-Fi-fliser (eller flash igen for\nat gendanne flise-partitionen).
+No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use.	Intet kortlager på dette board.\n\nDet har ingen flise-partition og\nintet microSD, kortet kan bruge.
+No map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.	Ingen kortfliser her.\n\nForbind til Wi-Fi (Indstillinger → Wi-Fi)\nfor at downloade området.
+No mapped repeaters in this route	Ingen kortlagte repeatere på denne rute
+No networks found (2.4 GHz only)	Ingen netværk fundet (kun 2,4 GHz)
+No onboard GPS	Ingen indbygget GPS
+No other networks found	Ingen andre netværk fundet
+No position yet. A cold start needs a clear view of the sky and can take several minutes.	Ingen position endnu. En kold start kræver frit udsyn til himlen og kan tage flere minutter.
+No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.	Ingen regioner endnu.\n\nTilføj en #region for at få beskeder\nmed det omfang navngivet i beskeddetaljer.
+No reply from %s	Intet svar fra %s
+No reply. Check password, server,\nor device clock (device: %s)	Intet svar. Tjek adgangskode, server\neller enhedens ur (enhed: %s)
+No saved map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.\nSaved tiles stay available offline.	Ingen gemte kortfliser her.\n\nForbind til Wi-Fi (Indstillinger → Wi-Fi)\nfor at downloade området.\nGemte fliser forbliver tilgængelige offline.
+No system time yet	Ingen systemtid endnu
+No telemetry in this window.\nRequest one, or widen the range below.	Ingen telemetri i dette vindue.\nAnmod om en, eller udvid intervallet nedenfor.
+No tiles (non-ESP32)	Ingen fliser (ikke ESP32)
+No version known yet. Wi-Fi and a completed update check are needed first.	Ingen kendt version endnu. Der kræves Wi-Fi og et gennemført opdateringstjek først.
+Node name	Nodenavn
+Node\nRegion\nRadio\nSignal\nContacts\nChannels\nBattery\nUptime	Node\nRegion\nRadio\nSignal\nKontakter\nKanaler\nBatteri\nOppetid
+Normal (100%)\nLarge (150%)\nHuge (200%)	Normal (100%)\nStor (150%)\nKæmpe (200%)
+Not enough free memory for Bluetooth. Turn Wi-Fi off first.	Ikke nok fri hukommelse til Bluetooth. Slå Wi-Fi fra først.
+Not enough free memory for Wi-Fi. Turn Bluetooth off first.	Ikke nok fri hukommelse til Wi-Fi. Slå Bluetooth fra først.
+Not enough free memory to fetch it. Reboot and try again.	Ikke nok fri hukommelse til at hente det. Genstart, og prøv igen.
+Nothing selected	Intet valgt
+Notification sound set	Notifikationslyd sat
+Notify on new contact	Giv besked ved ny kontakt
+Off	Fra
+Off\n1 day\n2 days\n3 days\n7 days	Fra\n1 dag\n2 dage\n3 dage\n7 dage
+Off\n1\n2\n3\n5\n8	Fra\n1\n2\n3\n5\n8
+Off\n60 min\n90 min\n2 hours\n3 hours\n4 hours	Fra\n60 min\n90 min\n2 timer\n3 timer\n4 timer
+Offline	Offline
+Older messages in a chat are dropped past this. A very large or unlimited history makes the chat list slower.	Ældre beskeder i en chat droppes ud over dette. En meget stor eller ubegrænset historik gør chatlisten langsommere.
+On - open the address above in a phone browser.	Til - åbn adressen ovenfor i en browser på telefonen.
+On boot	Ved opstart
+On map	På kortet
+Open Advertise app	Åbn Advertise-appen
+Open a .wav, then tap 'Set as notification sound'	Åbn en .wav, og tryk så 'Brug som notifikationslyd'
+Open a JPEG, then tap 'Set as wallpaper'	Åbn en JPEG, og tryk så 'Brug som baggrund'
+Open chat	Åbn chat
+Open in a browser (same Wi-Fi):	Åbn i en browser (samme Wi-Fi):
+Open in web	Åbn på web
+Open mesh console	Åbn mesh-konsol
+Optional — type your network, or leave blank to skip.	Valgfrit — skriv dit netværk, eller lad stå tomt for at springe over.
+Orange temp  Cyan humidity	Orange temp  Cyan fugt
+Orientation (tap to rotate, reboots)	Orientering (tryk for at rotere, genstarter)
+Out of memory	Løbet tør for hukommelse
+Overwrite oldest	Overskriv ældste
+Overwrite the SD card's settings and\nidentity with the internal copies,\nthen reboot?	Overskriv SD-kortets indstillinger og\nidentitet med de interne kopier,\nog genstart så?
+PNG isn't supported here\nUse a JPEG	PNG understøttes ikke her\nBrug en JPEG
+Pairing code	Parringskode
+Pairing code saved — reboot to apply	Parringskode gemt — genstart for at anvende
+Pairing code: %06lu	Parringskode: %06lu
+Pairing code: n/a	Parringskode: n/a
+Password (empty = open)	Adgangskode (tom = åben)
+Password (empty = skip Wi-Fi)	Adgangskode (tom = spring Wi-Fi over)
+Password (optional)	Adgangskode (valgfri)
+Password too long	Adgangskoden er for lang
+Paste	Indsæt
+Paste failed	Indsætning fejlede
+Paste the 64-hex public key and a name. Useful when you want to DM someone before their advert has arrived.	Indsæt den 64-hex offentlige nøgle og et navn. Nyttigt, når du vil skrive en DM til nogen, før deres advert er kommet.
+Pasted	Indsat
+Path hash: %u byte%s	Sti-hash: %u byte%s
+Path reset	Sti nulstillet
+Path reset failed	Nulstilling af sti fejlede
+Paused  —  score %d	Pause  —  point %d
+Per-transmit switching on	Skift pr. sending til
+Pick colour	Vælg farve
+Pick on the map	Vælg på kortet
+Ping	Ping
+Ping failed	Ping fejlede
+Pinged (direct) — waiting…	Pinget (direkte) — venter…
+Pinged (flood) — waiting…	Pinget (flood) — venter…
+Play	Spil
+Poll (min)	Poll (min)
+Poll every	Poll hver
+Poll every %d min	Poll hver %d min
+Port	Port
+Portrait set - applies when remote mode starts.	Stående sat - anvendes, når fjerntilstand starter.
+Position saved	Position gemt
+Power	Strøm
+Power off	Sluk
+Powering off… click trackball to wake	Slukker… klik på trackballen for at vække
+Press a key…	Tryk på en tast…
+Probe now	Prøv nu
+Probing neighbours…	Prøver naboer…
+Profile	Profil
+Pubkey must be 64 hex chars.	Offentlig nøgle skal være 64 hex-tegn.
+Public channel ready	Offentlig kanal klar
+Public key (64 hex chars)	Offentlig nøgle (64 hex-tegn)
+Public key:	Offentlig nøgle:
+Publish channel messages	Udgiv kanalbeskeder
+Publish direct messages	Udgiv direkte beskeder
+Purge	Ryd
+Purge all discovered nodes?	Ryd alle opdagede noder?
+Quick replies	Hurtige svar
+Quick reply	Hurtigt svar
+RAM %u%%  ·  PSRAM %u%%	RAM %u%%  ·  PSRAM %u%%
+RX %d entries · Raw %d entries	RX %d poster · Rå %d poster
+RX boosted gain	RX forstærket gain
+RX log	RX-log
+Radio & Mesh	Radio og mesh
+Radio + region set	Radio + region sat
+Radio applied	Radio anvendt
+Radio off	Radio fra
+Radio: off	Radio: fra
+Range test	Rækkeviddetest
+RangeTest failed	Rækkeviddetest fejlede
+RangeTest sent (direct)	Rækkeviddetest sendt (direkte)
+RangeTest sent (flood)	Rækkeviddetest sendt (flood)
+Raw log	Rå log
+Reads packets on a background task so a busy screen can't drop them.	Læser pakker i en baggrundsopgave, så en travl skærm ikke kan tabe dem.
+Reboot	Genstart
+Reboot device	Genstart enheden
+Rebooting...	Genstarter...
+Rebooting…	Genstarter…
+Receive unreleased test firmware — newer features, but less tested. The update check and Install update both follow the beta channel.	Modtag ikke-udgivet testfirmware — nyere funktioner, men mindre testet. Opdateringstjekket og Installer opdatering følger begge beta-kanalen.
+Recently heard	Hørt for nylig
+Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased.	Formater SD igen som MESHCOMOD (FAT32)?\nALLE data på kortet slettes.
+Region & scope	Region og omfang
+Region list is full	Regionslisten er fuld
+Region scope (#tag) for this channel.\nBlank = use the default scope.	Regionsomfang (#tag) for denne kanal.\nTom = brug standardomfanget.
+Region scope (#tag), blank = default.	Regionsomfang (#tag), tom = standard.
+Region scope (#tag, blank = none)	Regionsomfang (#tag, tom = intet)
+Remember password	Husk adgangskode
+Remote UI	Fjern-UI
+Remote UI (on)	Fjern-UI (til)
+Remote access	Fjernadgang
+Remote terminal	Fjernterminal
+Remote terminal (recommended)	Fjernterminal (anbefalet)
+Remote terminal off	Fjernterminal fra
+Remove	Fjern
+Remove %s?	Fjern %s?
+Remove channel	Fjern kanal
+Remove channel "%s"?\nLeaves it on this device only.	Fjern kanalen "%s"?\nForlader den kun på denne enhed.
+Removed	Fjernet
+Removed from favorites	Fjernet fra favoritter
+Rename	Omdøb
+Rename failed	Omdøbning fejlede
+Renamed	Omdøbt
+Replay	Afspil igen
+Replay route on map	Afspil ruten igen på kortet
+Replaying route…	Afspiller ruten…
+Resend	Send igen
+Resend failed	Gensending fejlede
+Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only.	Sender en besked igen, indtil en repeater gentager den, eller modtageren kvitterer. Slå fra for kun at sende én gang.
+Reset	Nulstil
+Reset path	Nulstil sti
+Restarting to apply the language…	Genstarter for at anvende sproget…
+Restarting to enable Bluetooth	Genstarter for at slå Bluetooth til
+Resume	Fortsæt
+Resuming missing files to SD...\nThis may take a few minutes; keep powered.	Genoptager manglende filer til SD...\nDet kan tage et par minutter; hold strømmen tilsluttet.
+Retry sends until heard	Send igen, indtil den er hørt
+Reverse scrollball	Omvendt scrollball
+Right	Højre
+Roll to highlight • click to insert	Rul for at markere • klik for at indsætte
+Room is read-only for you.\nJoin with the room password to post.	Rummet er skrivebeskyttet for dig.\nDeltag med rummets adgangskode for at skrive.
+Rotating - reconnecting...	Roterer - genforbinder...
+Rotating… rebooting	Roterer… genstarter
+Run setup again	Kør opsætning igen
+SD card   %s	SD-kort   %s
+SD card   %s   (hold: format)	SD-kort   %s   (hold: formater)
+SD card   (tap to mount)	SD-kort   (tryk for at montere)
+SD card   (unreadable - tap to retry)	SD-kort   (ulæseligt - tryk for at prøve igen)
+SD card inserted	SD-kort sat i
+SD card lost - reinsert to recover	SD-kort mistet - sæt det i igen for at gendanne
+SD card remounted	SD-kort monteret igen
+SD card removed	SD-kort fjernet
+SD card unavailable	SD-kort utilgængeligt
+SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	SD-data er utilgængelige - kontakter og kanaler kan ikke gemmes, før kortet sættes i igen.
+SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	SD-data er utilgængelige - identitet, indstillinger, kontakter og kanaler kan ikke gemmes, før kortet sættes i igen.
+SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	SD-datamigreringen er ufuldstændig. Identitet og indstillinger forbliver interne; brug Kopier interne data til SD for at prøve igen.
+SD download failed: %s	SD-download fejlede: %s
+SD formatted - %s (MESHCOMOD)	SD formateret - %s (MESHCOMOD)
+SD is busy - close tools and retry	SD er optaget - luk værktøjer, og prøv igen
+SD removed - card-backed data cannot be saved	SD fjernet - kortbaserede data kan ikke gemmes
+SD stayed busy - format cancelled, retry	SD forblev optaget - formatering annulleret, prøv igen
+SD unreadable - format it as FAT32 on a computer	SD ulæseligt - formater det som FAT32 på en computer
+SF	SF
+SF / CR / TX / AF	SF / CR / TX / AF
+SPIFFS %u/%u KB used	SPIFFS %u/%u KB brugt
+SSID set — enter password, then Save	SSID sat — indtast adgangskode, og tryk Gem
+SSID too long	SSID for langt
+Sample text	Eksempeltekst
+Save	Gem
+Save & restart	Gem og genstart
+Save / turn on	Gem / slå til
+Save auto-add	Gem auto-tilføj
+Save experimental	Gem eksperimentel
+Save failed	Gemning fejlede
+Save name	Gem navn
+Save policy	Gem politik
+Save position	Gem position
+Save quick replies	Gem hurtige svar
+Save report	Gem rapport
+Save update bin to SD	Gem opdaterings-bin på SD
+Saved	Gemt
+Saved backups	Gemte sikkerhedskopier
+Saved network	Gemt netværk
+Saved profiles	Gemte profiler
+Saved to slot %d	Gemt på plads %d
+Saved — applying…	Gemt — anvender…
+Saved — rebooting	Gemt — genstarter
+Saved — reconnecting…	Gemt — genforbinder…
+Saved: %s\nFlash it from the Launcher.	Gemt: %s\nFlash den fra Launcher.
+Saved: %s\nReady for offline flashing.	Gemt: %s\nKlar til offline flash.
+Saves the latest firmware of the selected channel to the SD card (BINS folder).	Gemmer den nyeste firmware fra den valgte kanal på SD-kortet (mappen BINS).
+Saving to SD… %d%%	Gemmer på SD… %d%%
+Saving to SD… 0%	Gemmer på SD… 0%
+Scan to open on phone	Scan for at åbne på telefonen
+Scanning…	Scanner…
+Scope direct msgs to region	Begræns direkte beskeder til regionen
+Screen	Skærm
+Screen locked	Skærm låst
+Screen timeout (s, 0 = never)	Skærm-timeout (s, 0 = aldrig)
+Screen timeout (s, 0 = never, min 10)	Skærm-timeout (s, 0 = aldrig, min 10)
+Screen timeout: %ds	Skærm-timeout: %ds
+Screen timeout: never	Skærm-timeout: aldrig
+Screen-off just dims	Skærm slukket dæmper kun
+Screenshot needs an SD card	Skærmbillede kræver et SD-kort
+Screenshot: low memory	Skærmbillede: lidt hukommelse
+Screenshot: no SD card	Skærmbillede: intet SD-kort
+Screenshot: write failed	Skærmbillede: skrivning fejlede
+Scroll down	Rul ned
+Scroll up	Rul op
+Scrollball: normal	Scrollball: normal
+Scrollball: reversed	Scrollball: omvendt
+Search	Søg
+Search contacts	Søg i kontakter
+Secondary keyboards	Sekundære tastaturer
+Secret (32 hex chars)	Hemmelighed (32 hex-tegn)
+Secret (32 hex, optional)	Hemmelighed (32 hex, valgfri)
+Secret must be 32 hex chars (or empty).	Hemmeligheden skal være 32 hex-tegn (eller tom).
+Select	Vælg
+Select a DM thread	Vælg en DM-tråd
+Select all	Vælg alt
+Select network	Vælg netværk
+Send advert	Send advert
+Send advert now	Send advert nu
+Send an advert now, or set how often you re-advertise.	Send en advert nu, eller vælg hvor ofte du advertiser igen.
+Send failed	Sending fejlede
+Sender blocked	Afsender blokeret
+Sensors	Sensorer
+Sensors tab: off (restart to apply)	Sensorfane: fra (genstart for at anvende)
+Sensors tab: on (restart to apply)	Sensorfane: til (genstart for at anvende)
+Sent	Sendt
+Set	Sæt
+Set an SSID first	Sæt et SSID først
+Set as notification sound	Brug som notifikationslyd
+Set as wallpaper	Brug som baggrund
+Set your location first	Sæt din position først
+Settings	Opsætning
+Setup complete	Opsætning færdig
+Share QR	Del QR
+Share channel	Del kanal
+Share contact	Del kontakt
+Share failed	Deling fejlede
+Share location in advert	Del position i advert
+Share secret	Del hemmelighed
+Share the 32-char secret so others can join. Leave the secret empty to generate a random one.	Del den 32-tegns hemmelighed, så andre kan deltage. Lad hemmeligheden være tom for at lave en tilfældig.
+Share: %s	Del: %s
+Show	Vis
+Show Sensors tab	Vis sensorfanen
+Show in the app drawer	Vis i app-skuffen
+Show link lines	Vis forbindelseslinjer
+Show menu-bar letters	Vis menulinjens bogstaver
+Show on chart	Vis på graf
+Show on map	Vis på kortet
+Sightline	Sigtelinje
+Signal & traffic	Signal og trafik
+Signal probe	Signalprøve
+Skip	Spring over
+Sleep ready	Klar til dvale
+Slot %d cleared	Plads %d ryddet
+Slot empty	Pladsen er tom
+Small\nMedium\nLarge	Lille\nMellem\nStor
+Snake  —  swipe or roll the trackball	Snake  —  swipe eller rul trackballen
+Sort	Sorter
+Sound	Lyd
+Sound off	Lyd fra
+Sound on	Lyd til
+Sound: %s	Lyd: %s
+Start time	Starttid
+Step 1 of 3	Trin 1 af 3
+Step 2 of 3	Trin 2 af 3
+Step 3 of 3	Trin 3 af 3
+Still analyzing the previous\npath… try again in a moment.	Analyserer stadig den forrige\nsti… prøv igen om et øjeblik.
+Stop	Stop
+Storage	Lager
+Store	Store
+Store data on SD (reboot)	Gem data på SD (genstart)
+Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device.	Streamer enhedens skærm som et live billede, du kan trykke på for at styre. Tungere; panelet viser en pladsholder. Skift genstarter enheden.
+Switch	Skift
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Skift til den eksterne antenne?\n\nSørg for, at der faktisk sidder en antenne i det eksterne antennestik først. At sende uden noget tilsluttet kan skade radioen.\n\nNulstilles til den indbyggede antenne ved hver genstart.
+Sync clock from system	Synkroniser ur fra systemet
+System Information	Systeminformation
+TCP %s  BLE %s\nWS clients %d  GPS %s  Buzzer %s	TCP %s  BLE %s\nWS-klienter %d  GPS %s  Summer %s
+TCP off	TCP fra
+TCP on	TCP til
+TOUCH BETA	TOUCH BETA
+TX	TX
+Tab hotkeys — tap a row, then press a key	Fane-genvejstaster — tryk på en række, og tryk så på en tast
+Tap Use to switch - the device reboots to apply.	Tryk Brug for at skifte - enheden genstarter for at anvende.
+Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own.	Tryk Brug for at skifte - enheden genstarter for at anvende. Sprogfiler ligger i /lang på lageret; rediger dem, eller tilføj dine egne.
+Tap a language; the device reboots to apply.	Tryk på et sprog; enheden genstarter for at anvende.
+Taste the rainbow!	Smag regnbuen!
+Telemetry	Telemetri
+Telemetry req (direct)…	Telemetri-anmodning (direkte)…
+Telemetry req (flood)…	Telemetri-anmodning (flood)…
+Telemetry req failed	Telemetri-anmodning fejlede
+Telemetry requests allowed	Telemetri-anmodninger tilladt
+Telemetry requests off	Telemetri-anmodninger fra
+Telemetry req…	Telemetri-anmodning…
+Telemetry settings	Telemetri-indstillinger
+Temperature	Temperatur
+Test builds: off	Testversioner: fra
+Test builds: on	Testversioner: til
+Theme	Tema
+Then pick a mode:	Vælg så en tilstand:
+This contact hasn't shared\na GPS position.	Denne kontakt har ikke delt\nen GPS-position.
+This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a phone companion (MeshCore app) together.\n\nRunning both at the same time uses more RAM, so turn on only what you need.\n\nSet them up anytime in Settings.	Denne enhed kan køre Wi-Fi og Bluetooth samtidig, som selvstændig radio og som telefon-ledsager (MeshCore-appen) på én gang.\n\nAt køre begge samtidig bruger mere RAM, så slå kun det til, du har brug for.\n\nSæt dem op når som helst i Indstillinger.
+Throttles the CPU when idle to save power	Sænker CPU'en ved inaktivitet for at spare strøm
+Tile reload needs Wi-Fi build	Genindlæsning af fliser kræver en Wi-Fi-build
+Tiles cleared — reconnect Wi-Fi to re-download	Fliser ryddet — forbind Wi-Fi igen for at downloade igen
+Tiles from SD card	Fliser fra SD-kort
+Time   %s	Tid   %s
+Time offset (vs automatic)	Tidsforskydning (i forhold til automatisk)
+Time offset: %+d h	Tidsforskydning: %+d t
+Time range (hours ago)	Tidsinterval (timer siden)
+Time zone	Tidszone
+Time zone: %s	Tidszone: %s
+Tip: you can scan for networks in Settings → Network after setup.	Tip: du kan scanne efter netværk i Indstillinger → Netværk efter opsætningen.
+Today	I dag
+Toggle GPS	Slå GPS til/fra
+Too large to edit (>8 KB)	For stor til at redigere (>8 KB)
+Topographic map	Topografisk kort
+Trace	Spor
+Trace SNR	Spor-SNR
+Trace failed	Sporing fejlede
+Trace route	Spor rute
+Trace sent…	Sporing sendt…
+Tracing route…	Sporer rute…
+Trackball navigates UI	Trackball styrer brugerfladen
+Trackball: cursor	Trackball: markør
+Trackball: navigate UI	Trackball: styr brugerfladen
+Turn Wi-Fi on first	Slå Wi-Fi til først
+Turn Wi-Fi on, then tap refresh. Apps already installed still work.	Slå Wi-Fi til, og tryk opdater. Apps, der allerede er installeret, virker stadig.
+Turn off	Slå fra
+Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Slå ældre skift pr. sending til?\n\nDiagnosetilstand, kun til sammenligning. Den sender på den indbyggede antenne og lytter på den eksterne, så dit udgående signal bliver meget svagere end dit indgående.\n\nNulstilles til den indbyggede antenne ved hver genstart.
+Turn the history limit off?\n\nA busy channel can then fill the whole message store, which uses more space and makes the chat list and app noticeably slower. Only do this if you really need the full backlog.	Slå historikgrænsen fra?\n\nEn travl kanal kan så fylde hele beskedlageret, hvilket bruger mere plads og gør chatlisten og appen mærkbart langsommere. Gør det kun, hvis du virkelig har brug for hele historikken.
+Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it.	Slå dette til, og åbn så adressen nedenfor i en hvilken som helst browser på samme Wi-Fi - ingen app nødvendig. Enhedens skærm vises live i browseren, og du kan trykke for at styre den.
+Type a URL, then Go	Skriv en URL, og tryk Gå
+Type a message...	Skriv en besked...
+Type a new 6-digit code · applies after a reboot	Skriv en ny 6-cifret kode · anvendes efter genstart
+Type your network name — or switch to Wi-Fi in Settings to scan	Skriv dit netværksnavn — eller skift til Wi-Fi i Indstillinger for at scanne
+UI size (restart to apply)	UI-størrelse (genstart for at anvende)
+UI size saved — restart to apply	UI-størrelse gemt — genstart for at anvende
+USB powered	USB-strøm
+Unblock	Fjern blokering
+Unblocked	Blokering fjernet
+Unfavorite it first	Fjern den fra favoritter først
+Unlocking…	Låser op…
+Unmute @	Slå @ til
+Unmute msgs	Slå beskeder til
+Unread %d	Ulæste %d
+Unread %d\nRAM %u%%  ·  PSRAM %u%%	Ulæste %d\nRAM %u%%  ·  PSRAM %u%%
+Unsupported WAV (need 16-bit PCM)	WAV understøttes ikke (kræver 16-bit PCM)
+Up	Op
+Update	Opdater
+Update bin saved to SD	Opdaterings-bin gemt på SD
+Update complete.\nRebooting...	Opdatering færdig.\nGenstarter...
+Update manually at flasher.wadamesh.com\n(Wi-Fi update is paused for now)	Opdater manuelt på flasher.wadamesh.com\n(Wi-Fi-opdatering er sat på pause indtil videre)
+Update via the Launcher	Opdater via Launcher
+Update via the Launcher / flasher.wadamesh.com	Opdater via Launcher / flasher.wadamesh.com
+Update via the Launcher / flasher.wadamesh.com.	Opdater via Launcher / flasher.wadamesh.com.
+Updated - rebooting…	Opdateret - genstarter…
+Use	Brug
+Username (optional)	Brugernavn (valgfrit)
+Volume	Lydstyrke
+W up  ·  A left  ·  D right  ·  Z down  ·  S select  ·  Q back	W op  ·  A venstre  ·  D højre  ·  Z ned  ·  S vælg  ·  Q tilbage
+WADA#15B6A6 MESH#	WADA#15B6A6 MESH#
+WADAMESH	WADAMESH
+Waiting for Wi-Fi...	Venter på Wi-Fi...
+Welcome to WADAMESH	Velkommen til WADAMESH
+While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Mens dette er slået til, kan alle på dit Wi-Fi se og styre denne enhed. Bruger almindelig HTTP (kun lokalt netværk).
+Wi-Fi	Wi-Fi
+Wi-Fi & Bluetooth	Wi-Fi og Bluetooth
+Wi-Fi and Bluetooth unavailable; retry from Settings	Wi-Fi og Bluetooth utilgængelige; prøv igen fra Indstillinger
+Wi-Fi is not enabled in this build.	Wi-Fi er ikke slået til i denne build.
+Wi-Fi isn't available on this build.	Wi-Fi er ikke tilgængeligt i denne build.
+Wi-Fi needed to fetch the\nterrain profile for this path.\nConnect in Settings → Wi-Fi.	Der kræves Wi-Fi for at hente\nterrænprofilen for denne sti.\nForbind i Indstillinger → Wi-Fi.
+Wi-Fi not connected	Wi-Fi ikke forbundet
+Wi-Fi off	Wi-Fi fra
+Wi-Fi on	Wi-Fi til
+Wi-Fi on, scanning…	Wi-Fi til, scanner…
+Wi-Fi paused; Bluetooth disconnect timed out	Wi-Fi på pause; Bluetooth-afbrydelse udløb
+Wi-Fi saved (radio off)	Wi-Fi gemt (radio fra)
+Wi-Fi saved, applying	Wi-Fi gemt, anvender
+Wi-Fi saved, reconnecting	Wi-Fi gemt, genforbinder
+Wi-Fi unavailable; Bluetooth restored	Wi-Fi utilgængeligt; Bluetooth gendannet
+Wi-Fi unavailable; retry from Settings	Wi-Fi utilgængeligt; prøv igen fra Indstillinger
+Yesterday	I går
+You can run setup later in Settings → Device	Du kan køre opsætningen senere i Indstillinger → Enhed
+Your location is unknown.\nSet GPS / position in\nSettings → Profile first.	Din position er ukendt.\nSæt GPS / position i\nIndstillinger → Profil først.
+Your name	Dit navn
+Your own apps	Dine egne apps
+Zero-hop	Nul-hop
+Zero-hop advert sent	Nul-hop-advert sendt
+Zoom: +/- buttons	Zoom: +/- knapper
+ambiguous (several regions matched)	tvetydig (flere regioner matchede)
+client connected	klient forbundet
+command	kommando
+contacts (%d):	kontakter (%d):
+diag boot...	diag-opstart...
+double-tap SPACE cycles through the ones you enable	dobbelttryk MELLEMRUM skifter mellem dem, du slår til
+drive the UI without the screen; keys still type in text fields	styr brugerfladen uden skærmen; taster skriver stadig i tekstfelter
+e.g. Family	fx Familie
+e.g. mesh	fx mesh
+from	fra
+h  to	t  til
+hold Backspace to unlock	hold Backspace for at låse op
+double-press d-pad center to unlock	dobbelttryk midt på d-pad for at låse op
+hold the trackball to unlock	hold trackballen for at låse op
+press the button to unlock	tryk på knappen for at låse op
+press the BOOT button to unlock	tryk på BOOT-knappen for at låse op
+hold the wake button to unlock	hold vækkeknappen for at låse op
+kHz	kHz
+keep holding	bliv ved med at holde
+last wake:	sidst vækket:
+last wake: 	sidst vækket:
+leave empty to generate	lad stå tom for at generere
+lights the keyboard + wakes the screen on an incoming message	tænder tastaturet + vækker skærmen ved en indgående besked
+mesh  link  armed	mesh  link  klar
+mesh busy	mesh optaget
+min (0=off)	min (0=fra)
+mkdir failed	mkdir fejlede
+n/a in this build	n/a i denne build
+now on channel %s	nu på kanal %s
+now talking to %s	taler nu med %s
+off	fra
+off = Enter adds a new line; tap Send to send	fra = Enter laver en ny linje; tryk Send for at sende
+on	til
+peak --	top --
+pick accented letters as you type; off = plain typing	vælg bogstaver med accent, mens du skriver; fra = almindelig skrivning
+press Volume Down to unlock	tryk Lydstyrke ned for at låse op
+push past a screen edge to scroll content	skub forbi en skærmkant for at rulle indholdet
+score %d	point %d
+search	søg
+tap for details	tryk for detaljer
+tap the language key (e.g. EN) on the keyboard to cycle the ones you enable	tryk på sprogtasten (fx EN) på tastaturet for at skifte mellem dem, du slår til
+tap to cancel	tryk for at annullere
+tap to exit full screen	tryk for at forlade fuld skærm
+zoom	zoom
+zoom %d	zoom %d
+~17 dB amp for quiet/remote areas; turn off in noisy spots.	~17 dB forstærkning til stille/fjerne områder; slå fra i støjende omgivelser.
+Scope	Omfang
+another region	en anden region
+my region	min region
+Save FAIL x%u	Gemning FEJLEDE x%u
+Save migrating	Gemning migrerer
+Saved %s	Gemt %s
+Sort discovered	Sorter opdagede
+Sort by	Sorter efter
+Peers	Peers
+Favorites	Favoritter
+Has location	Har position
+Direct (0-hop)	Direkte (0-hop)
+Heard %s	Hørt %s
+Traffic (since boot)\n  Sent   %u flood, %u direct\n  Recv   %u flood, %u direct	Trafik (siden opstart)\n  Sendt   %u flood, %u direkte\n  Modt.   %u flood, %u direkte
+Overwrite oldest non-favorite	Overskriv ældste ikke-favorit
+"%s" wants to send messages on the mesh.\n\nThey will be sent as %s and cannot be told apart from messages you typed.\n\nOnly allow this for an app you trust.	"%s" vil sende beskeder på meshet.\n\nDe sendes som %s og kan ikke skelnes fra beskeder, du selv har skrevet.\n\nTillad det kun for en app, du stoler på.
+%d of %d on map	%d af %d på kortet
+1-character messages will be ignored	Beskeder på 1 tegn ignoreres
+1-character messages will be shown	Beskeder på 1 tegn vises
+All	Alle
+Allow	Tillad
+Ignore 1-character messages	Ignorer beskeder på 1 tegn
+Join w/ password	Deltag m/ adgangskode
+Location no longer shared	Position deles ikke længere
+Location shared with anyone who asks	Position deles med alle, der spørger
+Location shared with chosen contacts only	Position deles kun med valgte kontakter
+Location shared with this contact	Position deles med denne kontakt
+Location sharing off	Positionsdeling fra
+Max dots	Maks. prikker
+Most mesh spam is a single character, because it is the cheapest message to send. Dropped silently: no chat entry, no notification, no sound.	Det meste mesh-spam er et enkelt tegn, fordi det er den billigste besked at sende. Droppes stille: ingen chatpost, ingen notifikation, ingen lyd.
+Never\nChosen contacts only\nAnyone who asks	Aldrig\nKun valgte kontakter\nAlle der spørger
+No apps installed.	Ingen apps installeret.
+No reply. Path hash is %u bytes;\nolder repeaters drop those.\nTry 1 byte (Settings > Radio & Mesh)	Intet svar. Sti-hash er %u bytes;\nældre repeatere dropper dem.\nPrøv 1 byte (Indstillinger > Radio og mesh)
+Not supported on this board	Ikke understøttet på dette board
+Reconnected to %.40s	Genforbundet til %.40s
+Sent only when that contact asks, encrypted to them. Nothing is broadcast. Needs "Answer telemetry requests" on. Pick contacts in a contact's menu.	Sendes kun, når kontakten spørger, krypteret til dem. Intet udsendes. Kræver "Besvar telemetri-forespørgsler" slået til. Vælg kontakter i en kontakts menu.
+Server has forgotten you.\nJoin with the room password.	Serveren har glemt dig.\nDeltag med rummets adgangskode.
+Share my loc	Del min pos.
+Share my location when asked	Del min position, når der spørges
+Stop sharing loc	Stop deling af pos.
+not asked yet	ikke spurgt endnu
+Battery life: gathering data…	Batteritid: indsamler data…
+Small\nMedium\nLarge\nJumbo	Lille\nMellem\nStor\nKæmpe
+"%s" wants to send PRIVATE messages as you.\n\nIt could write to any of your contacts, or post to a room, and the message will look exactly like one you typed.\n\nOnly allow this for an app you trust.	"%s" vil sende PRIVATE beskeder som dig.\n\nDen kan skrive til enhver af dine kontakter eller skrive i et rum, og beskeden vil se præcis ud som en, du selv har skrevet.\n\nTillad det kun for en app, du stoler på.
+Map pan off	Kortpanorering fra
+Map pan: arrows pan, Back exits	Kortpanorering: pile panorerer, Tilbage afslutter
+Perf:	Ydelse:
+Post to channels as me	Skriv i kanaler som mig
+Powering off… press BOOT to wake	Slukker… tryk BOOT for at vække
+Read channel messages	Læs kanalbeskeder
+Read private messages	Læs private beskeder
+Send private messages as me	Send private beskeder som mig
+What each installed app is allowed to do. Anything an app sends goes out under your node name and cannot be told apart from a message you typed. Private covers direct messages and room posts, and is kept separate from channels on purpose. Turn one off to take it back.	Hvad hver installeret app må. Alt, hvad en app sender, går ud under dit nodenavn og kan ikke skelnes fra en besked, du selv har skrevet. Privat dækker direkte beskeder og rumindlæg og holdes med vilje adskilt fra kanaler. Slå en fra for at tage den tilbage.
+Wi-Fi off, new map areas can't download	Wi-Fi fra, nye kortområder kan ikke downloades
+App permissions	App-tilladelser
+"%s" wants to send discovery probes.\n\nEach probe asks every node in range to reply, so it uses airtime on the whole local mesh, not just yours.\n\nNothing is sent under your name and no message is transmitted.	"%s" vil sende opdagelses-prober.\n\nHver probe beder alle noder inden for rækkevidde om at svare, så den bruger sendetid på hele det lokale mesh, ikke kun dit.\n\nIntet sendes under dit navn, og ingen besked udsendes.
+?	?
+About / credits	Om / anerkendelser
+Auth failed	Godkendelse fejlede
+Auto-add on for %s — new %s land in Contacts automatically.	Auto-tilføj til for %s — nye %s havner automatisk i Kontakter.
+Console mode	Konsoltilstand
+Console mode (experimental)	Konsoltilstand (eksperimentel)
+Direct (0-hop) only	Kun direkte (0-hop)
+EXPERIMENTAL. Boots into a text console with no graphical interface: type commands, read replies. Frees the memory and processor time the interface uses. Type 'ui' in the console to come back, and if it ever fails to start the device returns here on its own. Toggling reboots.	EKSPERIMENTEL. Starter i en tekstkonsol uden grafisk brugerflade: skriv kommandoer, læs svar. Frigør den hukommelse og processortid, som brugerfladen bruger. Skriv 'ui' i konsollen for at komme tilbage, og hvis den nogensinde ikke kan starte, vender enheden selv tilbage hertil. Skift genstarter.
+EXPERIMENTAL. Boots into a text console with no graphical interface: type commands, read replies. Frees the memory and processor time the interface uses. Type 'ui' in the console to come back. Toggling reboots.	EKSPERIMENTEL. Starter i en tekstkonsol uden grafisk brugerflade: skriv kommandoer, læs svar. Frigør den hukommelse og processortid, som brugerfladen bruger. Skriv 'ui' i konsollen for at komme tilbage. Skift genstarter.
+Enter text	Indtast tekst
+Entering console mode - rebooting...	Går i konsoltilstand - genstarter...
+Favorite	Favorit
+How tiles work:\nThe map is built from 256×256 "slippy" tiles. Only the tiles for the area you're viewing are fetched — there is no bulk pre-download.\n\nBecause this device can't do HTTPS (not enough heap after Wi-Fi starts) and decodes JPEG far more cheaply than PNG, tiles come from the wadamesh proxy: it fetches the upstream PNG over HTTPS with an identifying User-Agent, re-encodes it as JPEG, and caches it. Your device then caches each tile to its own flash, so a tile is only downloaded once.\n\nUse Options → Reload tiles to re-download the tiles currently in view if one looks corrupted.	Sådan virker fliser:\nKortet er bygget af 256×256 "slippy"-fliser. Kun fliserne for det område, du ser, hentes — der er ingen samlet forhåndsdownload.\n\nFordi denne enhed ikke kan HTTPS (ikke nok heap, når Wi-Fi er startet) og afkoder JPEG langt billigere end PNG, kommer fliserne fra wadamesh-proxyen: den henter den oprindelige PNG over HTTPS med en identificerende User-Agent, koder den om til JPEG og gemmer den. Enheden gemmer derefter hver flise i sin egen flash, så en flise kun downloades én gang.\n\nBrug Indstillinger → Genindlæs fliser for at downloade de viste fliser igen, hvis en ser ødelagt ud.
+Init…	Starter…
+Leaving console mode - rebooting...	Forlader konsoltilstand - genstarter...
+Link lost	Forbindelse mistet
+MESH	MESH
+Map data © OpenStreetMap contributors.\nopenstreetmap.org/copyright\nLicensed under the Open Database License (ODbL).\n\n	Kortdata © OpenStreetMap-bidragydere.\nopenstreetmap.org/copyright\nLicenseret under Open Database License (ODbL).\n\n
+Map style © OpenTopoMap (CC-BY-SA) — opentopomap.org\nMap data © OpenStreetMap contributors (ODbL) + SRTM.\n\n	Kortstil © OpenTopoMap (CC-BY-SA) — opentopomap.org\nKortdata © OpenStreetMap-bidragydere (ODbL) + SRTM.\n\n
+Name (A-Z)	Navn (A-Å)
+Nearest first	Nærmeste først
+Recent message	Seneste besked
+Reload tiles in view	Genindlæs viste fliser
+Repeaters	Repeatere
+SIGNAL	SIGNAL
+SSID not found	SSID ikke fundet
+Saved networks	Gemte netværk
+Select to delete	Vælg for at slette
+Send discovery probes	Send opdagelses-prober
+Show contacts	Vis kontakter
+Show coordinates	Vis koordinater
+Show tile z/x/y	Vis flise z/x/y
+Starting…	Starter…
+Text console (experimental)	Tekstkonsol (eksperimentel)
+Tile debug overlay	Flise-fejlsøgningsoverlay
+chats	chats
+repeaters	repeatere
+rooms	rum
+sensors	sensorer
+tap to cycle off / on / auto	tryk for at skifte fra / til / auto
+#7A7F87 Scanning… nothing has answered yet#	#7A7F87 Scanner… intet har svaret endnu#
+Export crash report (%uK)	Eksporter nedbrudsrapport (%uK)
+On-device text browser · no proxy, no tracking	Tekstbrowser på enheden · ingen proxy, ingen sporing
+Paste (copy)	Indsæt (kopi)
+Paste (move)	Indsæt (flyt)
+avg %.1f%%   peak %.1f%%   over %ds	gns. %.1f%%   top %.1f%%   over %ds
+channel busy %.1f%%	kanal optaget %.1f%%
+sampling...	måler...
+teal = now   blue = average	blågrøn = nu   blå = gennemsnit
+window restarted	vindue genstartet
+Filter	Filter
+Hide system files	Skjul systemfiler
+Networks	Netværk
+Other networks	Andre netværk
+Show system files	Vis systemfiler
+Unfav	Fjern fav.
+Firmware beta_%d\nChecking for updates over Wi-Fi…	Firmware beta_%d\nSøger efter opdateringer over Wi-Fi…
+Install beta_%d?\nThis downgrades the firmware and reboots.	Installer beta_%d?\nDette nedgraderer firmwaren og genstarter.
+Other (hidden) network…	Andet (skjult) netværk…
+Paused	På pause
+Scan again	Scan igen
+At a glance	Overblik
+At a glance disabled	Overblik slået fra
+At a glance enabled	Overblik slået til
+At a glance while locked	Overblik mens låst
+Glance only shows when unlocked	Overblik vises kun, når den er låst op
+Glance shows message previews\nwhile the screen is locked	Overblik viser beskedforhåndsvisninger,\nmens skærmen er låst
+Snake  —  swipe, roll, or press a direction	Snake  —  swipe, rul eller tryk en retning
+N/A	N/A
+This board cannot run this app.	Dette board kan ikke køre denne app.
+Signal	Signal
+Signal (stale)	Signal (forældet)
+nothing heard yet	intet hørt endnu
+Detecting the keyboard protocol	Finder tastaturprotokollen
+Older keyboard protocol	Ældre tastaturprotokol
+Device	Enhed
+Using the older keyboard protocol	Bruger den ældre tastaturprotokol
+turn on if your keyboard types the wrong letters; disables modifier latching	slå til, hvis dit tastatur skriver forkerte bogstaver; slår låsning af modifikatortaster fra
+Formatted OK - card did not remount, reinsert it	Formateret OK - kortet blev ikke monteret igen, sæt det i igen
+Allow saved open networks for time sync	Tillad gemte åbne netværk til tidssynkronisering
+Sync time from saved Wi-Fi after cold boot	Synkroniser tid fra gemt Wi-Fi efter kold start
+Loud alerts	Høje alarmer
+Loud alerts: off	Høje alarmer: fra
+Loud alerts: on	Høje alarmer: til
+higher-pitched chime; louder on most buzzers	højere tone; højere på de fleste summere
+path unknown	sti ukendt
+direct	direkte
+hop	hop
+hops	hop
+Advertised position displaced	Annonceret position forskudt
+Advertising your exact position	Annoncerer din præcise position
+Day theme - restarting to apply it…	Dagtema - genstarter for at anvende…
+Entering remote mode - restarting…	Går i fjerntilstand - genstarter…
+Exact	Præcis
+Leaving remote mode - restarting…	Forlader fjerntilstand - genstarter…
+Night theme - restarting to apply it…	Nattema - genstarter for at anvende…
+Position in adverts	Position i adverts
+Rotating… restarting to apply it	Roterer… genstarter for at anvende
+Within %u km	Inden for %u km
+Within %u m	Inden for %u m
+shifts the position others see; your own map keeps the real fix	flytter den position, andre ser; dit eget kort beholder det rigtige fix
+Clock set	Ur sat
+Set clock	Sæt ur
+Set the clock by hand (local time)	Sæt uret manuelt (lokal tid)
+That is not a valid date and time	Det er ikke en gyldig dato og tid
+Use YYYY-MM-DD HH:MM	Brug ÅÅÅÅ-MM-DD TT:MM
+Browser connected	Browser forbundet
+Could not clear previous upload	Kunne ikke rydde tidligere upload
+Could not create transfer folder	Kunne ikke oprette overførselsmappe
+File Transfer needs the SD card	Filoverførsel kræver SD-kortet
+File Transfer session expired	Filoverførselssessionen udløb
+File Transfer stopped: Wi-Fi disconnected	Filoverførsel stoppet: Wi-Fi afbrudt
+File Transfer: low memory	Filoverførsel: lidt hukommelse
+Reading file list	Læser filliste
+Session code	Sessionskode
+Stop File Transfer	Stop filoverførsel
+Upload files or download screenshots from a browser on the same Wi-Fi.	Upload filer eller download skærmbilleder fra en browser på samme Wi-Fi.
+Waiting for browser	Venter på browser
+Download mode (wait for USB flash)	Download-tilstand (vent på USB-flash)
+Download mode… reflash over USB,\nor press RESET to cancel	Download-tilstand… flash igen over USB,\neller tryk RESET for at annullere
+1 km	1 km
+100 m	100 m
+250 m	250 m
+Location privacy	Positionsprivatliv
+position others see is shifted; your own map keeps the real fix	den position, andre ser, er forskudt; dit eget kort beholder det rigtige fix
+Arrows • OK	Pile • OK
+Direct message color	Farve for direkte beskeder
+Incoming message blink	Blink ved indgående besked
+Notifications	Notifikationer
+Room / channel color	Farve for rum / kanal
+%s holds no plottable rows yet	%s indeholder endnu ingen rækker, der kan plottes
+Answering with your displaced position	Svarer med din forskudte position
+Answering with your exact position	Svarer med din præcise position
+Back is Esc only	Tilbage er kun Esc
+Back key	Tilbage-tast
+Back key saved	Tilbage-tast gemt
+Bluetooth is not running.	Bluetooth kører ikke.
+Bluetooth now serves a keyboard	Bluetooth bruges nu til et tastatur
+Bluetooth now serves the phone app	Bluetooth bruges nu til telefon-appen
+Colour	Farve
+Connected. Start typing.	Forbundet. Begynd at skrive.
+Could not connect. Is the keyboard in pairing mode?	Kunne ikke forbinde. Er tastaturet i parringstilstand?
+Disc.	Afbr.
+Do Not Disturb is on	Forstyr ikke er slået til
+Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.	Esc går altid tilbage. Hvis dit tastaturs Esc-tast skriver et tegn i stedet, så tryk på knappen, og tryk så på den tast. Tryk Esc for at fortryde.
+Exact position to those contacts	Præcis position til disse kontakter
+Forget	Glem
+Forget keyboard	Glem tastatur
+Forget this keyboard? You will need to pair it again.	Glem dette tastatur? Du skal parre det igen.
+Keyboard connected	Tastatur forbundet
+Keyboard forgotten	Tastatur glemt
+Keyboard layout	Tastaturlayout
+LoRa coverage survey	LoRa-dækningsundersøgelse
+Lock home to drawer	Lås startskærmen til skuffen
+Looking for keyboards...	Leder efter tastaturer...
+Name this run	Navngiv denne tur
+No keyboard paired	Intet tastatur parret
+Not connected. Press a key on the keyboard to wake it.	Ikke forbundet. Tryk på en tast på tastaturet for at vække det.
+Pair a keyboard	Par et tastatur
+Pair another keyboard	Par et andet tastatur
+Pair it again	Par det igen
+Pair with %s:	Par med %s:
+Pair with a code	Par med en kode
+Pair without a code	Par uden kode
+Pairing failed. Try pairing with a code.	Parring fejlede. Prøv at parre med en kode.
+Pairing failed. Type the code on the keyboard, then press Enter.	Parring fejlede. Skriv koden på tastaturet, og tryk så Enter.
+Pairing...	Parrer...
+Phone app	Telefon-app
+Pick the layout printed on the keys, or letters and symbols come out wrong.	Vælg det layout, der er trykt på tasterne, ellers kommer bogstaver og symboler forkert ud.
+Press a key...	Tryk på en tast...
+Put the keyboard in pairing mode, then tap Pair a keyboard.	Sæt tastaturet i parringstilstand, og tryk så Par et tastatur.
+Put the keyboard in pairing mode; it shows up below. Only Bluetooth Low Energy keyboards work.	Sæt tastaturet i parringstilstand; det vises nedenfor. Kun Bluetooth Low Energy-tastaturer virker.
+Refit	Tilpas
+Requests left	Anmodninger tilbage
+Review run	Gennemse tur
+Run review	Turgennemgang
+Search again	Søg igen
+Sound is off	Lyden er slået fra
+Start	Start
+Survey running	Undersøgelse kører
+Survey stopped	Undersøgelse stoppet
+That device does not offer keyboard input.	Den enhed tilbyder ikke tastaturinput.
+The keyboard needs to be paired again.	Tastaturet skal parres igen.
+This board cannot send discovery probes,	Dette board kan ikke sende opdagelses-prober,
+Turn Bluetooth on to use a keyboard.	Slå Bluetooth til for at bruge et tastatur.
+Type into any text field. Arrow keys and Tab move around, Enter opens, Esc goes back.	Skriv i et hvilket som helst tekstfelt. Piletaster og Tab flytter rundt, Enter åbner, Esc går tilbage.
+Type this code on the keyboard, then press Enter:	Skriv denne kode på tastaturet, og tryk så Enter:
+US (QWERTY)\nUK (QWERTY)\nGerman (QWERTZ)\nFrench (AZERTY)\nBelgian (AZERTY)	US (QWERTY)\nUK (QWERTY)\nTysk (QWERTZ)\nFransk (AZERTY)\nBelgisk (AZERTY)
+Unnamed device	Unavngivet enhed
+Upload, download, or delete files from a browser on the same Wi-Fi.	Upload, download eller slet filer fra en browser på samme Wi-Fi.
+Use Bluetooth for	Brug Bluetooth til
+With a code, one appears here: type it on the keyboard and press Enter. Use it when pairing without a code fails.	Med en kode vises der en her: skriv den på tastaturet, og tryk Enter. Brug den, når parring uden kode fejler.
+colour: balance, green even, red one-sided	farve: balance, grøn lige, rød ensidig
+colour: how well WE heard them	farve: hvor godt VI hørte dem
+colour: how well they heard US	farve: hvor godt de hørte OS
+held by 	holdt af
+no tiles cached here - blank ground, not open water	ingen fliser gemt her - tom grund, ikke åbent vand
+nothing has answered a probe yet	intet har svaret på en probe endnu
+reading %s ... %d rows	læser %s ... %d rækker
+route shape, not to scale - %d of %d stops	rutens form, ikke målfast - %d af %d stop
+screen on	skærm tændt
+so it cannot run a coverage survey.	så den kan ikke køre en dækningsundersøgelse.
+strongest first	stærkeste først
+then stop	og stop så
+this device	denne enhed
+waiting for a GPS fix - samples are discarded until then	venter på et GPS-fix - målinger kasseres indtil da
+This SD card has Windows malware on it, like the worm some ThinkNode M9 cards shipped with. It cannot run on this radio, but it will on a Windows PC. Before the card goes in a computer, remove it with SD Scan or, safest, format the card.	Dette SD-kort har Windows-malware på sig, ligesom den orm nogle ThinkNode M9-kort blev leveret med. Den kan ikke køre på denne radio, men det kan den på en Windows-pc. Før kortet kommer i en computer, så fjern den med SD Scan, eller, sikrest, formater kortet.
+Open SD Scan	Åbn SD Scan
+%d of %d	%d af %d
+%d threats found	%d trusler fundet
+%s files in %s folders	%s filer i %s mapper
+, %d unreadable	, %d ulæselige
+, map tiles skipped (%s folders)	, kortfliser sprunget over (%s mapper)
+Checked 	Tjekkede
+Full scan	Fuld scanning
+Full scan...	Fuld scanning...
+Insert the card and scan again.	Sæt kortet i, og scan igen.
+No SD card found.	Intet SD-kort fundet.
+Remove %d files?	Fjern %d filer?
+Remove all	Fjern alle
+Removed %d files.	Fjernede %d filer.
+Removed %d, %d could not be removed.	Fjernede %d, %d kunne ikke fjernes.
+Removing...	Fjerner...
+SD card malware check	Malware-tjek af SD-kort
+Scan	Scan
+Scanning...	Scanner...
+Stopped after 	Stoppede efter
+They are Windows programs, scripts, shortcuts or autorun files. A mesh radio never uses them, and nothing else on the card is touched.	Det er Windows-programmer, scripts, genveje eller autorun-filer. En mesh-radio bruger dem aldrig, og intet andet på kortet røres.
+This board has no SD card access for apps.	Dette board har ingen SD-kortadgang for apps.
+This firmware can only find them. Update wadamesh to remove them here.	Denne firmware kan kun finde dem. Opdater wadamesh for at fjerne dem her.
+Finds and removes Windows programs, scripts, shortcuts and autorun files, like the worm on some ThinkNode M9 cards. A mesh radio never uses these.	Finder og fjerner Windows-programmer, scripts, genveje og autorun-filer, ligesom ormen på nogle ThinkNode M9-kort. En mesh-radio bruger dem aldrig.
+No known Windows malware found.	Ingen kendt Windows-malware fundet.
+This firmware can find these but not remove them. Update wadamesh, or format the card: in Files, hold the SD card row.	Denne firmware kan finde dem, men ikke fjerne dem. Opdater wadamesh, eller formater kortet: i Filer, hold på SD-kort-rækken.
+SD Scan only removes files it recognises. If the card may be infected, the safest fix is to copy off what you need and format it completely: in Files, hold the SD card row.	SD Scan fjerner kun filer, den genkender. Hvis kortet kan være inficeret, er den sikreste løsning at kopiere det, du skal bruge, og formatere det helt: i Filer, hold på SD-kort-rækken.
+and %d more	og %d mere
+%d nodes heard today	%d noder hørt i dag
+%lu packets heard	%lu pakker hørt
+1 node heard today	1 node hørt i dag
+1 packet heard	1 pakke hørt
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Forbind enheden til computeren med et USB-kabel.\n2. Åbn denne adresse i Chrome eller Edge:
+3. Click Connect and choose this device.	3. Klik Forbind, og vælg denne enhed.
+4 numbers or letters	4 tal eller bogstaver
+A day	En dag
+A week	En uge
+Add a channel	Tilføj en kanal
+Add, download or delete files on this device from a computer.	Tilføj, download eller slet filer på denne enhed fra en computer.
+Advertise	Advertise
+Always on when connected to power	Altid tændt, når der er strøm tilsluttet
+Anything worth saying (optional)	Noget værd at sige (valgfrit)
+App drawer	App-skuffe
+App icons	App-ikoner
+Append timestamp	Tilføj tidsstempel
+Apr	apr
+April	april
+Asks for 4 numbers or letters to unlock, and locks whenever the screen goes off. If you forget it, the only way back in is to reset the device, which erases everything on it.	Beder om 4 tal eller bogstaver for at låse op, og låser, hver gang skærmen slukker. Hvis du glemmer den, er den eneste vej ind at nulstille enheden, hvilket sletter alt på den.
+Aug	aug
+August	august
+Blocked	Blokeret
+Change PIN	Skift PIN
+Channel	Kanal
+Channels	Kanaler
+Chat	Chat
+Chat icon reset	Chatikon nulstillet
+Chats	Chats
+Choose a PIN	Vælg en PIN
+Clock not set	Uret er ikke sat
+Cmdr	Cmdr
+Commander	Commander
+Companion	Ledsager
+Connected to the computer	Forbundet til computeren
+Could not send the report. Try again later.	Kunne ikke sende rapporten. Prøv igen senere.
+Count this device	Tæl denne enhed
+Current PIN	Nuværende PIN
+Cursor	Markør
+Dec	dec
+December	december
+Delete this conversation?	Slet denne samtale?
+Device id	Enheds-id
+Direct	Direkte
+Direct message	Direkte besked
+Direct, no repeaters	Direkte, ingen repeatere
+Discover	Opdag
+Double-tap SPACE while typing to switch	Dobbelttryk MELLEMRUM, mens du skriver, for at skifte
+Emoji	Emoji
+Enter PIN	Indtast PIN
+Enter it again	Indtast den igen
+Export Backup	Eksporter sikkerhedskopi
+Feb	feb
+February	februar
+Fri	fre
+Friday	fredag
+Has a problem	Har et problem
+Heard by %u repeaters	Hørt af %u repeatere
+Heard by 1 repeater	Hørt af 1 repeater
+Hold the trackball to switch	Hold trackballen for at skifte
+Home button opens	Hjem-knappen åbner
+I hit a problem	Jeg stødte på et problem
+I understand	Jeg forstår
+If you forget your PIN, you have to reset the device	Hvis du glemmer din PIN, skal du nulstille enheden
+Internal	Intern
+It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.	Det er den eneste vej ind, og det sletter alt på den: kontakter, kanaler, beskeder og indstillinger. Ingen kan låse den op for dig.
+Jan	jan
+January	januar
+Join # channel	Deltag i #-kanal
+Join Public channel	Deltag i offentlig kanal
+Jul	jul
+July	juli
+Jun	jun
+June	juni
+Keyboard and input	Tastatur og input
+Keyboard attached.\nRestarting in landscape in %d s.	Tastatur tilsluttet.\nGenstarter liggende om %d s.
+Large	Stor
+Launcher	Launcher
+Launcher layout	Launcher-layout
+Locks when screen off\n(hold the BOOT button to unlock)	Låser når skærmen slukkes\n(hold BOOT-knappen for at låse op)
+Map and GPS	Kort og GPS
+Map tiles	Kortfliser
+Mar	mar
+March	marts
+Mark all as read	Marker alle som læst
+May	maj
+Mentions	Omtaler
+Mentions muted	Omtaler slået fra
+Mentions unmuted	Omtaler slået til
+Mesh · 24 h	Mesh · 24 t
+Message %s	Besked til %s
+Message text on lock screen	Beskedtekst på låseskærmen
+Messages muted	Beskeder slået fra
+Messages unmuted	Beskeder slået til
+Minutes	Minutter
+Mon	man
+Monday	mandag
+Mute mentions	Slå omtaler fra
+Mute messages	Slå beskeder fra
+Navigate	Naviger
+Never	Aldrig
+New PIN	Ny PIN
+No backups available to restore.	Ingen sikkerhedskopier at gendanne.
+No backups yet. Use Export Backup above to create one.	Ingen sikkerhedskopier endnu. Brug Eksporter sikkerhedskopi ovenfor for at lave en.
+No channels yet	Ingen kanaler endnu
+No direct chats yet	Ingen direkte chats endnu
+Normal\nLarge text\nHuge text	Normal\nStor tekst\nKæmpe tekst
+Not delivered, tap to resend	Ikke leveret, tryk for at sende igen
+Nov	nov
+November	november
+Oct	okt
+October	oktober
+On	Til
+On battery, show it for	På batteri, vis den i
+PIN changed	PIN ændret
+PIN lock	PIN-lås
+PIN lock off	PIN-lås fra
+PIN lock on	PIN-lås til
+Phone-app link	Telefon-app-forbindelse
+Pick the numbers, or type the PIN	Vælg tallene, eller skriv PIN-koden
+Preview screensaver	Forhåndsvis pauseskærm
+Radio and messaging	Radio og beskeder
+Reboot Now	Genstart nu
+Received %s	Modtaget %s
+Receiving %s	Modtager %s
+Region not saved: use a-z, 0-9 and -	Region ikke gemt: brug a-z, 0-9 og -
+Remote	Fjern-UI
+Repeater	Repeater
+Report a bug	Rapporter en fejl
+Reset chat icon	Nulstil chatikon
+Room	Rum
+Routed	Routet
+Running it for	Har kørt den i
+Running it for:	Har kørt den i:
+SD card	SD-kort
+SD unavailable - insert a FAT32 card and retry	SD utilgængeligt - sæt et FAT32-kort i, og prøv igen
+Sat	lør
+Saturday	lørdag
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Fortæl om denne build virker på dit board, så en stabil udgivelse forfremmes på baggrund af beviser og ikke bare fordi ingen har klaget. En fejlrapport åbnes som en QR-kode: scan den og opret den fra din telefon under din egen GitHub-konto.
+Screen timeout	Skærm-timeout
+Screensaver	Pauseskærm
+Scroll	Rul
+Scroll moves the screen; Cursor points and clicks; Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.	Rul flytter skærmen; Markør peger og klikker; Naviger (eksperimentel) flytter en markering. Hold trackballen for at skifte mellem Rul og Markør.
+Send	Send
+Send a test report	Send en testrapport
+Send another test report	Send en ny testrapport
+Sending %s	Sender %s
+Sending your report...	Sender din rapport...
+Sensor	Sensor
+Sep	sep
+September	september
+Share my contact	Del min kontakt
+Spectrum	Spektrum
+Stop USB Files	Stop USB Files
+Storage and SD	Lager og SD
+Sun	søn
+Sunday	søndag
+Tap the EN key on the keyboard to switch	Tryk på EN-tasten på tastaturet for at skifte
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Fortæller matrixen, hvor mange enheder der kører denne build, så et board uden rapporter kan skelnes fra et board, ingen ejer. Sender boardet og versionen, intet andet.
+Terminal	Terminal
+Test report: %s	Testrapport: %s
+Thank you. Your report is on wadamesh.com/beta	Tak. Din rapport er på wadamesh.com/beta
+The PINs did not match	PIN-koderne var ikke ens
+The mesh around you instead of a dark screen. Every ring is a real packet.	Meshet omkring dig i stedet for en mørk skærm. Hver ring er en rigtig pakke.
+This is everything that leaves the device. No name, no contacts, no position.	Dette er alt, der forlader enheden. Intet navn, ingen kontakter, ingen position.
+Thu	tor
+Thursday	torsdag
+Tick only what you actually used:	Sæt kun flueben ved det, du faktisk har brugt:
+Too many chat icons	For mange chatikoner
+Too many tries. Wait %u s	For mange forsøg. Vent %u s
+Trackball	Trackball
+Trackball: scroll	Trackball: rul
+Transfer	Overfør
+Tue	tir
+Tuesday	tirsdag
+Turn Wi-Fi on to send a report	Slå Wi-Fi til for at sende en rapport
+Type 4 numbers or letters	Skriv 4 tal eller bogstaver
+USB Files	USB Files
+USB Files: low memory	USB Files: lidt hukommelse
+Unmute mentions	Slå omtaler til
+Unmute messages	Slå beskeder til
+Upload of %s stopped	Upload af %s stoppet
+Used	Brugt
+VNC	VNC
+Waiting for the computer	Venter på computeren
+Web	Web
+Wed	ons
+Wednesday	onsdag
+While this screen is open, the companion app cannot use USB.	Mens denne skærm er åben, kan ledsager-appen ikke bruge USB.
+Works	Virker
+Wrong PIN	Forkert PIN
+You:	Dig:
+a week or more	en uge eller mere
+about a day	cirka en dag
+heard %s ago	hørt for %s siden
+hold the BOOT button to unlock	hold BOOT-knappen for at låse op
+hop away	hop væk
+hops away	hop væk
+minutes	minutter
+new	ny
+node	node
+nodes	noder
+now	nu
+routed	routet
+A colour for every section, coloured status icons, names and glyphs in their own hue.	En farve for hver sektion, farvede statusikoner, navne og glyffer i deres egen farvetone.
+Apply and restart	Anvend og genstart
+Applying the theme, restarting…	Anvender temaet, genstarter…
+Bubbles in colour	Bobler i farver
+Bubbles plain	Enkle bobler
+Chat icons	Chatikoner
+Colourful bubbles	Farverige bobler
+Custom	Tilpasset
+Every app and page its own colour, with a little motion.	Hver app og side sin egen farve, med lidt bevægelse.
+Black and white with heavy outlines, for bright sun or low vision.	Sort og hvid med kraftige konturer, til skarpt sollys eller nedsat syn.
+Glyphs	Glyffer
+High contrast keeps its own fixed colours.	Høj kontrast beholder sine egne faste farver.
+Initials	Initialer
+MORE COLORS!	FLERE FARVER!
+Mode	Tilstand
+Names are always in colour; this colours the bubbles too.	Navne er altid i farver; dette farver også boblerne.
+Neon	Neon
+On my way	På vej
+Pastel	Pastel
+Preview	Forhåndsvisning
+Rainbow	Regnbue
+Regular	Almindelig
+Ridge at six?	Højderyggen kl. seks?
+Taste the rainbow	Smag regnbuen
+Use this colour	Brug denne farve
+(empty)	(tom)
+0 adds from any distance, 1 only nodes heard directly, and N up to N-1 hops away.	0 tilføjer fra enhver afstand, 1 kun noder hørt direkte, og N op til N-1 hop væk.
+1 byte	1 byte
+2 bytes	2 bytes
+3 bytes	3 bytes
+@ mentions	@-omtaler
+A card with the message when one arrives while the screen is dark.	Et kort med beskeden, når en kommer, mens skærmen er mørk.
+A higher-pitched chime, louder on most buzzers.	En højere tone, højere på de fleste summere.
+A little more receive sensitivity for a little more current.	Lidt mere modtagerfølsomhed for lidt mere strøm.
+A mention has its own sound and switch, so it can get through when messages are quiet.	En omtale har sin egen lyd og kontakt, så den kan komme igennem, når beskeder er slået fra.
+A new node replaces the oldest contact. Favourites are never replaced.	En ny node erstatter den ældste kontakt. Favoritter erstattes aldrig.
+A node you hear an advert from joins Contacts when its type is on here.	En node, du hører en advert fra, kommer i Kontakter, når dens type er slået til her.
+A short note on screen when a node is added.	En kort besked på skærmen, når en node tilføjes.
+Add automatically	Tilføj automatisk
+Adverts reach every node in range, unencrypted. GPS > Location privacy can shift the position they carry.	Adverts når alle noder inden for rækkevidde, ukrypteret. GPS > Positionsprivatliv kan forskyde den position, de indeholder.
+After a cold start	Efter en kold start
+After this many failed background saves the chat is saved straight away, which can stutter the screen for a moment. Off keeps retrying in the background.	Efter så mange mislykkede gemninger i baggrunden gemmes chatten med det samme, hvilket kan få skærmen til at hakke et øjeblik. Fra bliver ved med at prøve i baggrunden.
+Allow open networks for it	Tillad åbne netværk til det
+Always on: e-paper keeps showing its last frame.	Altid tændt: e-paper bliver ved med at vise sit sidste billede.
+Anyone who asks	Alle der spørger
+Applies after a restart.	Anvendes efter genstart.
+Backlight	Baggrundslys
+Bandwidth (kHz)	Båndbredde (kHz)
+Battery and sensor readings, for nodes that ask. Your location has its own setting below.	Batteri- og sensoraflæsninger, til noder der spørger. Din position har sin egen indstilling nedenfor.
+Battery saver	Batterisparing
+Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.	Bluetooth-parring er ikke tilgængelig på denne enhed. Radiochippens fabriksfirmware understøtter det ikke.
+Bottom	Bund
+Brightness	Lysstyrke
+Broker	Broker
+By hand (local time)	Manuelt (lokal tid)
+Calibrate as full	Kalibrer som fuld
+Chat history	Chathistorik
+Chat users	Chatbrugere
+Chosen contacts only	Kun valgte kontakter
+Community preset	Fællesskabsforvalg
+Connected to %s	Forbundet til %s
+Contacts are on internal flash: the SD card did not mount at boot. Re-seat the card and restart.	Kontakter ligger i intern flash: SD-kortet blev ikke monteret ved opstart. Sæt kortet i igen, og genstart.
+Custom UTC offset	Tilpasset UTC-forskydning
+Direct messages	Direkte beskeder
+Double-tap SPACE to cycle through English and the layouts you turn on.	Dobbelttryk MELLEMRUM for at skifte mellem engelsk og de layouts, du slår til.
+Encryption	Kryptering
+Experimental. Boots into a text console with no graphical interface: type commands, read replies. Type 'ui' there to come back; if it ever fails to start, the device returns here on its own. Turning it on or off restarts.	Eksperimentel. Starter i en tekstkonsol uden grafisk brugerflade: skriv kommandoer, læs svar. Skriv 'ui' der for at komme tilbage; hvis den nogensinde ikke kan starte, vender enheden selv tilbage hertil. At slå den til eller fra genstarter.
+Experimental. Throttles the processor while the device sits idle.	Eksperimentel. Sænker processoren, mens enheden er inaktiv.
+Export	Eksporter
+Export backup	Eksporter sikkerhedskopi
+Firmware	Firmware
+Firmware %s\nDevelopment build: the update check is off.	Firmware %s\nUdviklingsbuild: opdateringstjekket er slået fra.
+Flashes on a new message and breathes while any are unread.	Blinker ved en ny besked og pulserer, mens der er ulæste.
+Forwards other nodes' packets, like a repeater. Costs airtime and battery.	Videresender andre noders pakker, ligesom en repeater. Koster sendetid og batteri.
+Frequency (MHz)	Frekvens (MHz)
+From	Fra
+Hold the key to copy it.	Hold på nøglen for at kopiere den.
+Huge	Kæmpe
+Huge text	Kæmpe tekst
+Joins a saved network briefly at boot just to set the clock.	Forbinder kort til et gemt netværk ved opstart, kun for at sætte uret.
+Jumbo	Jumbo
+Keep per chat	Behold pr. chat
+Keeps your node's name off the status bar.	Holder din nodes navn ude af statuslinjen.
+Keyboard layouts	Tastaturlayouts
+Large text	Stor tekst
+Layout	Layout
+Letters move the highlight when no text field is focused; they still type in text fields.	Bogstaver flytter markeringen, når intet tekstfelt er valgt; de skriver stadig i tekstfelter.
+Lights the keyboard and wakes the screen when a message arrives.	Tænder tastaturet og vækker skærmen, når en besked kommer.
+Location sharing	Positionsdeling
+Locking	Låsning
+Look	Udseende
+Low memory	Lidt hukommelse
+MQTT bridge saved and on	MQTT-bro gemt og slået til
+MQTT bridge saved, off	MQTT-bro gemt, slået fra
+Max	Maks.
+Max duty cycle	Maks. duty cycle
+Medium	Mellem
+Mesh	Mesh
+Message light	Beskedlys
+Minutes, 1 to 1440.	Minutter, 1 til 1440.
+Mode: BLE off	Tilstand: BLE fra
+Mode: BLE off (Wi-Fi on)	Tilstand: BLE fra (Wi-Fi til)
+Mode: BLE on	Tilstand: BLE til
+Mode: BLE on (+ Wi-Fi)	Tilstand: BLE til (+ Wi-Fi)
+More bytes tell repeaters apart in a big mesh. Repeaters older than MeshCore 1.14 drop 2 and 3 byte packets.	Flere bytes skelner repeatere fra hinanden i et stort mesh. Repeatere ældre end MeshCore 1.14 dropper pakker med 2 og 3 bytes.
+Moving the data to the SD card did not finish. Identity and settings are still internal; Copy internal data to SD tries again.	Flytningen af data til SD-kortet blev ikke færdig. Identitet og indstillinger er stadig interne; Kopier interne data til SD prøver igen.
+Moving the navigation bar, restarting…	Flytter navigationslinjen, genstarter…
+Navigation	Navigation
+Navigation bar	Navigationslinje
+New messages	Nye beskeder
+No GPS module on this device. You can still set your advert position by hand in Profile.	Intet GPS-modul på denne enhed. Du kan stadig sætte din advert-position manuelt i Profil.
+No backups yet. Use Export backup above to create one.	Ingen sikkerhedskopier endnu. Brug Eksporter sikkerhedskopi ovenfor for at lave en.
+No limit	Ingen grænse
+No messages yet.\nSay hello!	Ingen beskeder endnu.\nSig hej!
+No network chosen yet.	Intet netværk valgt endnu.
+No sensors on this device.	Ingen sensorer på denne enhed.
+No thread selected.\n\nTap a chat to open it.	Ingen tråd valgt.\n\nTryk på en chat for at åbne den.
+Normal	Normal
+Not asked yet	Ikke spurgt endnu
+Nothing above applies until you save.	Intet ovenfor anvendes, før du gemmer.
+Off reuses meshcore-backup.json, the file name the MeshCore app uses.	Fra genbruger meshcore-backup.json, det filnavn MeshCore-appen bruger.
+Off sends them the shifted position your adverts use (GPS > Location privacy).	Fra sender dem den forskudte position, dine adverts bruger (GPS > Positionsprivatliv).
+Off shows who wrote and how many, not what.	Fra viser hvem der skrev og hvor mange, ikke hvad.
+Off silences everything below.	Fra gør alt nedenfor lydløst.
+Off: Enter adds a new line, and Send sends.	Fra: Enter laver en ny linje, og Send sender.
+On the left or right it becomes a rail, and Home shows its buttons as icons.	Til venstre eller højre bliver den en skinne, og Hjem viser sine knapper som ikoner.
+Orientation	Orientering
+Other people's private messages to you. Only to a broker you control.	Andres private beskeder til dig. Kun til en broker, du styrer.
+Others see your advertised position shifted by up to this much; your own map keeps the real fix.	Andre ser din annoncerede position forskudt med op til så meget; dit eget kort beholder det rigtige fix.
+PIN	PIN
+Pair the phone app over Wi-Fi instead: join this device to your network, then add it in the app by its IP address (TCP, port 5000), shown on the Wi-Fi page. USB works too.	Par telefon-appen over Wi-Fi i stedet: forbind enheden til dit netværk, og tilføj den så i appen med dens IP-adresse (TCP, port 5000), som vises på Wi-Fi-siden. USB virker også.
+Pick accented letters as you type. Off is plain typing.	Vælg bogstaver med accent, mens du skriver. Fra er almindelig skrivning.
+Pick one from the quick-reply button beside the message box in any chat. An empty slot is skipped.	Vælg et fra hurtigsvar-knappen ved siden af beskedfeltet i enhver chat. En tom plads springes over.
+Picking one applies it straight away.	Når du vælger en, anvendes den med det samme.
+Play a sound for	Afspil en lyd for
+Privacy	Privatliv
+Publish	Udgiv
+Push the cursor past a screen edge to scroll what is under it.	Skub markøren forbi en skærmkant for at rulle det, der er under den.
+Quick reply saved	Hurtigt svar gemt
+Radio	Radio
+Receiver	Modtager
+Replaces identity, channels and contacts with the backup's, then restarts.	Erstatter identitet, kanaler og kontakter med sikkerhedskopiens, og genstarter så.
+Room servers	Rumservere
+Routing	Routing
+SD data is unavailable: contacts and channels cannot be saved until the card is back.	SD-data er utilgængelige: kontakter og kanaler kan ikke gemmes, før kortet er tilbage.
+SD data is unavailable: identity, settings, contacts and channels cannot be saved until the card is back.	SD-data er utilgængelige: identitet, indstillinger, kontakter og kanaler kan ikke gemmes, før kortet er tilbage.
+SF is the spreading factor, CR the coding rate, AF the airtime factor. A field applies when you leave it.	SF er spreading factor, CR er coding rate, AF er airtime factor. Et felt anvendes, når du forlader det.
+Save in the foreground after	Gem i forgrunden efter
+Saved to the SD card when one is in, otherwise to internal storage.	Gemmes på SD-kortet, når der sidder et i, ellers i det interne lager.
+Scroll moves the screen, Cursor points and clicks, Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.	Rul flytter skærmen, Markør peger og klikker, Naviger (eksperimentel) flytter en markering. Hold trackballen for at skifte mellem Rul og Markør.
+Sends a zero-hop advert when no neighbour has been heard for a while, so the signal reading stays fresh. Neighbours only; nothing is repeated.	Sender en nul-hop-advert, når ingen nabo er hørt i et stykke tid, så signalaflæsningen holdes frisk. Kun naboer; intet gentages.
+Sends an extra copy of each ACK, so the sender is likelier to hear one.	Sender en ekstra kopi af hver ACK, så afsenderen har bedre chance for at høre en.
+Serial speed	Seriel hastighed
+Set the time	Sæt tiden
+Shows the message text on a locked device too.	Viser også beskedteksten på en låst enhed.
+Silences the message sounds between these times every day. Messages still arrive.	Gør beskedlydene lydløse mellem disse tidspunkter hver dag. Beskeder kommer stadig frem.
+Small	Lille
+Sounds	Lyde
+Status bar & units	Statuslinje og enheder
+Store data on the SD card	Gem data på SD-kortet
+Sync time from saved Wi-Fi	Synkroniser tid fra gemt Wi-Fi
+TX dBm	TX dBm
+Tab keys	Fanetaster
+Tap a row, then press the key you want for it.	Tryk på en række, og tryk så på den tast, du vil bruge til den.
+Tap the language key (EN) on the on-screen keyboard to cycle through the layouts you turn on.	Tryk på sprogtasten (EN) på skærmtastaturet for at skifte mellem de layouts, du slår til.
+Tap to switch between off, on and auto.	Tryk for at skifte mellem fra, til og auto.
+Tap with a full battery to call its voltage 100%. Hold to go back to the default.	Tryk med fuldt batteri for at kalde dets spænding 100%. Hold for at gå tilbage til standard.
+Test reports	Testrapporter
+Text colour	Tekstfarve
+Text console	Tekstkonsol
+Text size	Tekststørrelse
+Text size saved, restarting to apply it…	Tekststørrelse gemt, genstarter for at anvende…
+The MQTT bridge is not in this build.	MQTT-broen er ikke med i denne build.
+The arrows and Enter always work. These letters are extra: tap a row, then press a key.	Pilene og Enter virker altid. Disse bogstaver er ekstra: tryk på en række, og tryk så på en tast.
+The tab keys, over the navigation bar's icons.	Fanetasterne, over navigationslinjens ikoner.
+The touchscreen ignores taps until you unlock.	Berøringsskærmen ignorerer tryk, indtil du låser op.
+This device has no speaker.	Denne enhed har ingen højttaler.
+Time on air	Sendetid
+Top	Top
+Turn on if your keyboard types the wrong letters. It turns off modifier latching.	Slå til, hvis dit tastatur skriver forkerte bogstaver. Det slår låsning af modifikatortaster fra.
+Turn on only if your repeater re-floods just one region. Otherwise it can block logins and direct messages across regions.	Slå kun til, hvis din repeater kun genudsender én region. Ellers kan den blokere logins og direkte beskeder på tværs af regioner.
+Typing	Skrivning
+Unreleased test firmware: newer features, less tested. The update check and Install update both follow it.	Ikke-udgivet testfirmware: nyere funktioner, mindre testet. Opdateringstjekket og Installer opdatering følger den begge.
+Until	Indtil
+Up to date (beta_%d)	Opdateret (beta_%d)
+Update available: beta_%d\nYou have beta_%d. Get it at flasher.wadamesh.com.	Opdatering tilgængelig: beta_%d\nDu har beta_%d. Hent den på flasher.wadamesh.com.
+Update available: beta_%d\nYou have beta_%d. Install it below.	Opdatering tilgængelig: beta_%d\nDu har beta_%d. Installer den nedenfor.
+Used only when the time zone is Custom (UTC offset).	Bruges kun, når tidszonen er Tilpasset (UTC-forskydning).
+Wallpaper	Baggrund
+When Contacts is full	Når Kontakter er fuld
+Wi-Fi is off.	Wi-Fi er slået fra.
+YYYY-MM-DD HH:MM	ÅÅÅÅ-MM-DD TT:MM
+The speed your GPS module talks at. Applies after a restart.	Den hastighed, dit GPS-modul taler med. Anvendes efter genstart.
+%d heard	%d hørt
+%d m up	%d m op
+%d mentions	%d omtaler
+%d new	%d nye
+%d nodes	%d noder
+%d sats, fix	%d sat., fix
+%d sats, no fix	%d sat., intet fix
+%d unread	%d ulæste
+%d.%d%% of %d%%	%d.%d%% af %d%%
+%lu d ago	for %lu d siden
+%lu h ago	for %lu t siden
+%lu min ago	for %lu min siden
+%lu s ago	for %lu s siden
+%s · about %s left	%s · cirka %s tilbage
+%u new	%u nye
+1 heard	1 hørt
+1 mention	1 omtale
+1 node	1 node
+1 unread	1 ulæst
+Add a widget	Tilføj en widget
+Advert sent across the mesh	Advert sendt gennem meshet
+Adverts share it exactly	Adverts deler den præcist
+Adverts share it to %u km	Adverts deler den inden for %u km
+Adverts share it to %u m	Adverts deler den inden for %u m
+Airtime	Sendetid
+App	App
+App removed	App fjernet
+App widget	App-widget
+Arrange Home	Arranger Hjem
+Ask every 15 min	Spørg hvert 15. min
+Ask every 2 hours	Spørg hver 2. time
+Ask every 30 min	Spørg hvert 30. min
+Ask every hour	Spørg hver time
+Asking for its readings	Spørger efter dens aflæsninger
+Asks every so often for its readings	Spørger med jævne mellemrum efter dens aflæsninger
+BT off	BT fra
+BT on	BT til
+Busy, try again in a moment	Optaget, prøv igen om et øjeblik
+Charging	Oplader
+Chat not found	Chat ikke fundet
+Choose a chat	Vælg en chat
+Choose a node	Vælg en node
+Choose a store app	Vælg en Store-app
+Choose an app	Vælg en app
+Choose the app	Vælg appen
+Choose the chat	Vælg chatten
+Choose the node	Vælg noden
+Choose the switches	Vælg kontakterne
+Choose up to four	Vælg op til fire
+Clock	Ur
+Clock in the bar on Home	Ur i linjen på Hjem
+Compass	Kompas
+Daylight left %s	Dagslys tilbage %s
+Do not disturb	Forstyr ikke
+Done	Færdig
+Drag to move, tap - to remove	Træk for at flytte, tryk - for at fjerne
+From apps	Fra apps
+Glance	Overblik
+Heard	Hørt
+Hold to choose a node	Hold for at vælge en node
+Hold to choose an app	Hold for at vælge en app
+Hold to choose another	Hold for at vælge en anden
+Home is empty. Hold here to add widgets.	Hjem er tom. Hold her for at tilføje widgets.
+Home is full	Hjem er fuld
+Home: %s	Hjem: %s
+Install GPS Compass from the Store to calibrate	Installer GPS Compass fra Store for at kalibrere
+Keyboard light	Tastaturlys
+Links	Links
+MQTT on	MQTT til
+MQTT waiting	MQTT venter
+Mesh radar	Mesh-radar
+Minimal	Minimal
+Moon %d%%, waning	Måne %d%%, aftagende
+Moon %d%%, waxing	Måne %d%%, tiltagende
+Move	Flyt
+Move %s	Flyt %s
+Nearest	Nærmeste
+Needs open sky	Kræver frit udsyn til himlen
+No app chosen	Ingen app valgt
+No apps installed	Ingen apps installeret
+No chats yet	Ingen chats endnu
+No compass reading	Ingen kompasaflæsning
+No contacts yet	Ingen kontakter endnu
+No messages yet	Ingen beskeder endnu
+No new messages	Ingen nye beskeder
+No position yet	Ingen position endnu
+No reading yet	Ingen aflæsning endnu
+No readings in the reply	Ingen aflæsninger i svaret
+No room for it on Home	Ingen plads til den på Hjem
+No room there	Ingen plads der
+No sunrise or sunset today	Ingen solopgang eller solnedgang i dag
+Nobody heard directly yet	Ingen hørt direkte endnu
+None unread	Ingen ulæste
+Not in your adverts	Ikke i dine adverts
+Note	Note
+Nothing heard lately	Intet hørt for nylig
+Off leaves the time to a clock widget when Home has one.	Fra overlader tiden til en ur-widget, når Hjem har en.
+On the left or right it becomes a rail.	Til venstre eller højre bliver den en skinne.
+Open the app once to fill this in	Åbn appen én gang for at udfylde dette
+PSRAM	PSRAM
+Pick a place	Vælg et sted
+Position	Position
+Power and sensors	Strøm og sensorer
+RAM	RAM
+Remote sensor	Fjernsensor
+SNR	SNR
+Send across the mesh	Send gennem meshet
+Send to nodes in range	Send til noder inden for rækkevidde
+Set one in Profile, or turn on GPS	Sæt en i Profil, eller slå GPS til
+Shortcuts	Genveje
+Sig	Sig
+Start over from	Start forfra fra
+Start over from a preset	Start forfra fra et forvalg
+Sun and moon	Sol og måne
+Sunrise in %s	Solopgang om %s
+Switches	Kontakter
+System	System
+Tap to open the map	Tryk for at åbne kortet
+Tap to show	Tryk for at vise
+Tap to write	Tryk for at skrive
+Tap to write a note	Tryk for at skrive en note
+That app is not installed any more	Den app er ikke installeret længere
+The mesh	Meshet
+The radio	Radioen
+The sun has set	Solen er gået ned
+This hour	Denne time
+Time and place	Tid og sted
+Unread	Ulæste
+Wi-Fi connecting	Wi-Fi forbinder
+Widgets	Widgets
+You	Dig
+across the mesh	gennem meshet
+airtime	sendetid
+app linked	app forbundet
+app on Bluetooth	app på Bluetooth
+app on Wi-Fi	app på Wi-Fi
+asking...	spørger...
+by hops	efter hop
+choose a node	vælg en node
+dev build	dev-build
+flood	flood
+heading	kurs
+heard	hørt
+hidden	skjult
+in the last hour	i den seneste time
+locator	locator
+mention	omtale
+mentions	omtaler
+nearby	i nærheden
+nearest	nærmeste
+no app	ingen app
+no fix	intet fix
+no position	ingen position
+no reply yet	intet svar endnu
+offline	offline
+sats	sat.
+sunrise	solopgang
+sunrise tomorrow	solopgang i morgen
+sunset	solnedgang
+tap to calibrate	tryk for at kalibrere
+to nodes in range	til noder inden for rækkevidde
+tomorrow, %s	i morgen, %s
+unread	ulæste
+up %s	oppe %s
+Channel busy	Kanal optaget
+avg %.1f%%, peak %.1f%%	gns. %.1f%%, top %.1f%%
+(default)	(standard)
+Back to my position	Tilbage til min position
+Battery saver off	Batterisparing fra
+Battery saver on	Batterisparing til
+Chat settings	Chatindstillinger
+Contacts on the map	Kontakter på kortet
+Day or night	Dag eller nat
+Default wallpaper	Standardbaggrund
+Discovered nodes	Opdagede noder
+Enter, then turn the wheel	Enter, og drej så hjulet
+Follow me	Følg mig
+Found automatically: when the GPS does not answer at this speed, the device tries the others and keeps the one that works. This is where it starts.	Findes automatisk: når GPS'en ikke svarer på denne hastighed, prøver enheden de andre og beholder den, der virker. Det er her, den starter.
+Hold Enter: settings	Hold Enter: indstillinger
+Keep holding: settings	Bliv ved med at holde: indstillinger
+Keeps the map on your position	Holder kortet på din position
+Mark all read	Marker alle læst
+More	Mere
+Nickname	Kaldenavn
+Nickname not saved	Kaldenavn ikke gemt
+Nickname removed	Kaldenavn fjernet
+Nickname saved	Kaldenavn gemt
+Notification sound	Notifikationslyd
+Power off or reboot	Sluk eller genstart
+Power off?	Sluk?
+Restarts to switch	Genstarter for at skifte
+Saver	Sparer
+Saves power while the screen is off	Sparer strøm, mens skærmen er slukket
+Screenshot	Skærmbillede
+Screenshot timer	Skærmbillede-timer
+Shows the zoom slider	Viser zoom-skyderen
+Zoom	Zoom
+Zoom in	Zoom ind
+Zoom out	Zoom ud
+Temperature in Fahrenheit	Temperatur i Fahrenheit
+Up to 15 characters	Op til 15 tegn
+Favorites only	Kun favoritter
+Home is full: hold a widget to remove one	Hjem er fuld: hold på en widget for at fjerne en
+The Bluetooth chip is not responding.	Bluetooth-chippen svarer ikke.
+Bluetooth could not start. Restart the device and try again.	Bluetooth kunne ikke starte. Genstart enheden, og prøv igen.
+Record track	Optag spor
+Recording track	Optager spor
+Recording needs an SD card	Optagelse kræver et SD-kort
+Could not write to the SD card	Kunne ikke skrive til SD-kortet
+Try the card again	Prøv kortet igen
+Next page	Næste side
+Previous page	Forrige side
+Back to the start	Tilbage til start
+Track saved: %.2f km, %u points	Spor gemt: %.2f km, %u punkter
+Track stopped: the SD card is not writable	Spor stoppet: SD-kortet kan ikke skrives til
+The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.	SD-kortet kunne ikke læses, så denne opstart kører fra det interne lager. Din nodes nøgle er bevaret. Beskeder, kontakter og indstillinger på kortet kommer tilbage, når det kan læses igen.
+The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.	SD-kortet kunne ikke læses, så denne opstart kører fra det interne lager. Enheden havde ingen kopi af nodens nøgle, så den startede med en ny; kortet har stadig den gamle nøgle og dens beskeder, kontakter og indstillinger.
+%.1f dB SNR at SF%d	%.1f dB SNR ved SF%d
+%s ago	for %s siden
+1 min	1 min
+10 min	10 min
+Acknowledgement	Kvittering
+Air split	Luftfordeling
+Anonymous request	Anonym anmodning
+Average	Gennemsnit
+Band	Bånd
+Busy	Optaget
+Channel data	Kanaldata
+Channel message	Kanalbesked
+Decodes to	Afkoder til
+Direct with a region code	Direkte med en regionskode
+Flood with a region code	Flood med en regionskode
+Floor	Bund
+Hops	Hop
+Live	Live
+Margin	Margen
+Multipart	Flerdelt
+Noise	Støj
+Packet	Pakke
+Path	Sti
+Peak	Top
+Request	Anmodning
+Response	Svar
+Route	Rute
+Size	Størrelse
+Tap to go back	Tryk for at gå tilbage
+budget %d s   tx %d   rx %d   err %d   duty %d%%   SF%d	budget %d s   tx %d   rx %d   fejl %d   duty %d%%   SF%d
+budget %d s  tx %d  rx %d	budget %d s  tx %d  rx %d
+channel busy now	kanal optaget nu
+listening, nothing heard yet	lytter, intet hørt endnu
+no airtime yet	ingen sendetid endnu
+over %d:%02d	over %d:%02d
+#	#
+@	@
+RSSI	RSSI
+RX	RX
+RX/min	RX/min
+rx %d%%  tx %d%%	rx %d%%  tx %d%%
+Add MP3 or WAV files to this app's folder.	Tilføj MP3- eller WAV-filer til denne apps mappe.
+Cannot play	Kan ikke afspille
+Looking for music...	Leder efter musik...
+Looking for music... %d	Leder efter musik... %d
+Music	Musik
+No music found	Ingen musik fundet
+No speaker	Ingen højttaler
+Playing	Afspiller
+Put MP3 or WAV files in a Music folder on the SD card.	Læg MP3- eller WAV-filer i en mappe ved navn Music på SD-kortet.
+Repeat all	Gentag alle
+Repeat off	Gentag fra
+Repeat this track	Gentag dette nummer
+Showing the first %d tracks	Viser de første %d numre
+Sound is off: Settings > Sound	Lyden er slået fra: Indstillinger > Lyd
+Stopped	Stoppet
+This device cannot play music.	Denne enhed kan ikke afspille musik.
+Hardware	Hardware
+Display & lock	Skærm og lås
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Hold Bluetooth slået til for at parre MeshCore-appen på din telefon. Wi-Fi kan sættes op når som helst i Indstillinger.
+Radio:	Radio:
+Keyboard:	Tastatur:
+newer keyboard	nyere tastatur
+older keyboard	ældre tastatur
+older keyboard (set manually)	ældre tastatur (sat manuelt)
+keyboard not detected yet	tastatur ikke fundet endnu
+Always use the external antenna (MMCX)	Brug altid den eksterne antenne (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	Starter på det eksterne stik ved hver opstart. Kun til en antenne, der bliver siddende.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Vælg kun Ekstern med en antenne i det eksterne stik. Efter genstart starter den på den indbyggede antenne, medmindre kontakten nedenfor er slået til.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Brug altid den eksterne antenne?\n\nRadioen starter på det eksterne (MMCX) stik ved hver opstart. At sende uden en antenne tilsluttet kan skade radioen.\n\nSlå kun dette til, hvis din eksterne antenne bliver siddende.
+Turn on	Slå til
+On-board antenna selected	Indbygget antenne valgt
+External antenna at every boot	Ekstern antenne ved hver opstart
+Antenna	Antenne
+On-board	Indbygget
+Glass tiles	Glasfliser
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	Widgets, kort og panelfliser lader baggrunden skinne igennem. Fra: massive fliser.
+0 to 9. Higher waits longer between sends.	0 til 9. Højere venter længere mellem afsendelser.
+A name is required	Et navn er påkrævet
+A node clock only moves forward: syncing cannot set it back.	Et node-ur går kun fremad: synkronisering kan ikke sætte det tilbage.
+A room server lists only its admins here.	En rumserver viser kun sine administratorer her.
+Access	Adgang
+Access changed	Adgang ændret
+Actions	Handlinger
+Admin password	Admin-adgangskode
+Admin password changed.	Admin-adgangskode ændret.
+Admin password for full control, or the room password.	Admin-adgangskode for fuld kontrol, eller rummets adgangskode.
+Admin password for full control. A guest sees status and neighbours.	Admin-adgangskode for fuld kontrol. En gæst ser status og naboer.
+Advanced	Avanceret
+Advert hop limit	Hop-grænse for adverts
+Advert intervals	Advert-intervaller
+Adverts	Adverts
+Again	Igen
+Airtime factor	Airtime factor
+Bandwidth	Båndbredde
+Change	Skift
+Change radio settings	Skift radioindstillinger
+Change the admin password? If you lose it you can no longer manage this node over the mesh.	Skift admin-adgangskoden? Mister du den, kan du ikke længere administrere denne node over meshet.
+Clients	Klienter
+Coding rate	Coding rate
+Console	Konsol
+Current	Nuværende
+Decimal degrees, for example 4.4025	Decimalgrader, for eksempel 4.4025
+Decimal degrees, for example 51.2194	Decimalgrader, for eksempel 51.2194
+Direct send delay	Forsinkelse for direkte afsendelse
+Discover neighbours	Opdag naboer
+Duplicates	Dubletter
+Enter a number	Indtast et tal
+Enter a password	Indtast en adgangskode
+Error	Fejl
+Errors	Fejl
+Firmware update: the node opens a Wi-Fi access point; join it and upload the new firmware in a browser, as the node's own instructions say.	Firmwareopdatering: noden åbner et Wi-Fi-adgangspunkt; forbind til det, og upload den nye firmware i en browser, som nodens egen vejledning siger.
+Flood advert	Flood-advert
+Flood hop limit	Hop-grænse for flood
+Flood send delay	Forsinkelse for flood-afsendelse
+Floods with more hops are not repeated. 0 to 64.	Floods med flere hop gentages ikke. 0 til 64.
+Frequency: 150 to 2500 MHz	Frekvens: 150 til 2500 MHz
+Guest	Gæst
+Guest password	Gæsteadgangskode
+Hours between flood adverts: 0 (off) or 3 to 168.	Timer mellem flood-adverts: 0 (fra) eller 3 til 168.
+How hard to drop packets that came back around.	Hvor hårdt pakker, der er kommet rundt igen, skal droppes.
+Identity	Identitet
+Identity & location	Identitet og position
+Last reply	Seneste svar
+Last signal	Seneste signal
+Lets a wrong or blank password in to read, not to post.	Lukker en forkert eller tom adgangskode ind til at læse, ikke til at skrive.
+Load more (%d of %u)	Indlæs flere (%d af %u)
+Local advert	Lokal advert
+Location	Position
+Log in	Log ind
+Log in as admin	Log ind som admin
+Log in as guest	Log ind som gæst
+Logged in as a guest: you can read the status and neighbours. Log in with the admin password to change settings.	Logget ind som gæst: du kan læse status og naboer. Log ind med admin-adgangskoden for at ændre indstillinger.
+Logged in without admin rights. Log in with the admin password to change settings.	Logget ind uden admin-rettigheder. Log ind med admin-adgangskoden for at ændre indstillinger.
+Logging in...	Logger ind...
+Login refused.	Login afvist.
+Logs in as a guest. Blank lets anyone in as a guest. Up to 15 characters.	Logger ind som gæst. Tom lukker alle ind som gæst. Op til 15 tegn.
+Loop detection	Løkkedetektion
+Manage	Administrer
+Members log in with it to post. Up to 15 characters.	Medlemmer logger ind med den for at skrive. Op til 15 tegn.
+Minutes between zero-hop adverts: 0 (off) or 60 to 240.	Minutter mellem nul-hop-adverts: 0 (fra) eller 60 til 240.
+Moderate	Moderat
+Neighbours	Naboer
+New password	Ny adgangskode
+Newest	Nyeste
+No neighbours heard yet.	Ingen naboer hørt endnu.
+No reply	Intet svar
+No reply from the node	Intet svar fra noden
+No reply. Check the password, that the node is in range, and this device's clock.	Intet svar. Tjek adgangskoden, at noden er inden for rækkevidde, og denne enheds ur.
+No reply. It may or may not have been applied: read it again.	Intet svar. Det er måske anvendt, måske ikke: læs det igen.
+No spaces	Ingen mellemrum
+Nobody on the list.	Ingen på listen.
+Node clock	Node-ur
+Noise floor	Støjgulv
+Not in your contacts	Ikke i dine kontakter
+Not in your contacts, so only removing is possible here.	Ikke i dine kontakter, så her kan den kun fjernes.
+Not saved	Ikke gemt
+Off: this node stops forwarding anything.	Fra: denne node holder op med at videresende noget.
+Order	Rækkefølge
+Owner	Ejer
+Owner info	Ejerinfo
+Password	Adgangskode
+Passwords	Adgangskoder
+Passwords & access	Adgangskoder og adgang
+Posts	Indlæg
+Prefers stronger copies of a flood. 0 to 20.	Foretrækker stærkere kopier af et flood. 0 til 20.
+Queue	Kø
+Random delay factor before repeating a flood. 0 to 2.	Tilfældig forsinkelsesfaktor før et flood gentages. 0 til 2.
+Read again	Læs igen
+Read-only	Skrivebeskyttet
+Read-only access	Skrivebeskyttet adgang
+Read-write	Læse-skrive
+Reading...	Læser...
+Reboot sent. The node is back in about 10 s.	Genstart sendt. Noden er tilbage om cirka 10 s.
+Reboot the node? It is off the air for about 10 s and forgets guest logins.	Genstart noden? Den er ude af luften i cirka 10 s og glemmer gæstelogins.
+Receive delay	Modtageforsinkelse
+Received	Modtaget
+Refresh	Opdater
+Regions	Regioner
+Remove access	Fjern adgang
+Remove this client's access?	Fjern denne klients adgang?
+Repeat packets	Gentag pakker
+Repeaters this node hears directly, with the signal it hears them at.	Repeatere, som denne node hører direkte, med det signal, den hører dem med.
+Repeating	Gentager
+Repeating & limits	Gentagelse og grænser
+Reset counters	Nulstil tællere
+Reset the node's packet counters?	Nulstil nodens pakketællere?
+Room password	Rummets adgangskode
+Save (after a reboot)	Gem (efter genstart)
+Save new radio settings?\nNow: %s\nNew: %s\nThey apply after a reboot. Wrong values can cut this node off for good.	Gem nye radioindstillinger?\nNu: %s\nNy: %s\nDe anvendes efter genstart. Forkerte værdier kan afskære denne node for altid.
+Saved. Applies after a reboot.	Gemt. Anvendes efter genstart.
+Saved. The node uses the new radio settings after a reboot. Reboot it now?	Gemt. Noden bruger de nye radioindstillinger efter genstart. Genstart den nu?
+Saving...	Gemmer...
+Send flood advert	Send flood-advert
+Send now	Send nu
+Send zero-hop advert	Send nul-hop-advert
+Set the node's position to this device's position?	Sæt nodens position til denne enheds position?
+Shown to anyone who asks this node. Up to 119 characters.	Vises for alle, der spørger denne node. Op til 119 tegn.
+Spreading factor	Spreading factor
+Start a firmware update on the node? It opens its own Wi-Fi access point until it is updated or rebooted, and stops repeating meanwhile.	Start en firmwareopdatering på noden? Den åbner sit eget Wi-Fi-adgangspunkt, indtil den er opdateret eller genstartet, og holder op med at gentage imens.
+Start firmware update	Start firmwareopdatering
+Status	Status
+Strict	Streng
+Strongest	Stærkeste
+Sync clock to this device	Synkroniser ur til denne enhed
+The node's region tree: ^ marks its home region, F that it repeats floods for that region. Edit regions in the Console.	Nodens regionstræ: ^ markerer dens hjemregion, F at den gentager floods for den region. Rediger regioner i Konsol.
+The passwords do not match	Adgangskoderne er ikke ens
+The position goes out in the node's adverts.	Positionen sendes ud i nodens adverts.
+The same for direct packets. 0 to 2.	Det samme for direkte pakker. 0 til 2.
+The same limit for adverts. 0 to 64.	Den samme grænse for adverts. 0 til 64.
+This device	Denne enhed
+This device has no position	Denne enhed har ingen position
+Transmit power	Sendeeffekt
+Try	Prøv
+Try for 10 minutes	Prøv i 10 minutter
+Try new radio settings for %u minutes?\nNow: %s\nTry: %s\nThe node goes back by itself. Until then you reach it only on the new settings.	Prøv nye radioindstillinger i %u minutter?\nNu: %s\nPrøv: %s\nNoden går selv tilbage. Indtil da når du den kun på de nye indstillinger.
+Up to 31 characters, without [ ] \\ : , ? *	Op til 31 tegn, uden [ ] \\ : , ? *
+Updated %s ago	Opdateret for %s siden
+Uptime	Oppetid
+Use my position	Brug min position
+Use this device's settings	Brug denne enheds indstillinger
+Wrong radio settings can cut this node off: you then reach it only on the new settings, or not at all. Try them first; the node goes back by itself.	Forkerte radioindstillinger kan afskære denne node: du når den så kun på de nye indstillinger, eller slet ikke. Prøv dem først; noden går selv tilbage.
+dBm, -9 to 30. Applies at once.	dBm, -9 til 30. Anvendes med det samme.
+pushed	skubbet
+you	dig
+Flood in / out	Flood ind / ud
+Direct in / out	Direkte ind / ud
+Airtime TX / RX	Sendetid TX / RX
+Fewest hops	Færrest hop
+module attached	modul tilsluttet
+not attached	ikke tilsluttet
+Portrait	Stående
+Portrait 180	Stående 180
+Landscape	Liggende
+Landscape 180	Liggende 180
+Use the trackball	Brug trackballen
+Turn off a damaged trackball that moves or clicks by itself. While it is off, Enter unlocks the lock screen.	Slå en beskadiget trackball fra, der bevæger sig eller klikker af sig selv. Mens den er slået fra, låser Enter låseskærmen op.
+Trackball on	Trackball til
+Trackball off	Trackball fra
+press Enter to unlock	tryk Enter for at låse op
+Locks when screen off\n(press Enter to unlock)	Låser når skærmen slukkes\n(tryk Enter for at låse op)
+Powering off… press reset to wake	Slukker… tryk reset for at vække
+Low	Lav
+F11 on the keyboard steps through these too.	F11 på tastaturet skifter også mellem disse.
+Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi blev slået fra, fordi enheden gik ned, mens det var tændt. Slå det til i Indstillinger > Wi-Fi for at prøve igen.
+Auto	Auto
+Auto tries the common speeds until the GPS answers and keeps the one that works. Pick a speed only if Auto does not find it. Applies after a restart.	Auto prøver de almindelige hastigheder, indtil GPS'en svarer, og beholder den, der virker. Vælg kun en hastighed, hvis Auto ikke finder den. Anvendes efter genstart.
+Rooms	Rum
+Auto-delete: on	Auto-slet: til
+Auto-delete: off	Auto-slet: fra
+Contact Management	Kontakthåndtering
+Delete after %d days	Slet efter %d dage
+Removed %d old contact(s)	Fjernede %d gamle kontakt(er)
+Pulse	Puls
+Gentle	Blid
+Long	Lang
+Heartbeat	Hjerteslag
+Keep north up	Hold nord op
+The mesh stays put instead of slowly turning around you.	Meshet bliver stående i stedet for langsomt at dreje rundt om dig.
+Map file	Kortfil
+Folder tiles only	Kun mappefliser
+rename the file to the folder name	omdøb filen til mappens navn
+not a PNG raster archive	ikke et PNG-rasterarkiv
+file incomplete, copy it again	filen er ufuldstændig, kopier den igen
+not a PMTiles v3 file	ikke en PMTiles v3-fil
+No map files found. Copy a PNG archive to\n/maps/<name>/<name>.pmtiles	Ingen kortfiler fundet. Kopier et PNG-arkiv til\n/maps/<name>/<name>.pmtiles
+Zoom: map levels only	Zoom: kun kortniveauer
+No map levels found on the SD card	Ingen kortniveauer fundet på SD-kortet
+%d mA · %u:%02u left	%d mA · %u:%02u tilbage
+%d mA · %u:%02u to full	%d mA · %u:%02u til fuld
+%d.%d °C · %u cycles · health %u%%	%d.%d °C · %u cyklusser · sundhed %u%%
+%u / %u mAh · %s left	%u / %u mAh · %s tilbage
+%u / %u mAh · %s left at your usage	%u / %u mAh · %s tilbage ved dit forbrug
+%u / %u mAh · full in %s	%u / %u mAh · fuld om %s
+@ mention	@-omtale
+A click for each keypress and each turn of the knob.	Et klik for hvert tastetryk og hver drejning af knappen.
+Apply to the fuel gauge	Anvend på batterimåleren
+Back to 1500 mAh	Tilbage til 1500 mAh
+Back to safe defaults	Tilbage til sikre standardværdier
+Battery at %d%%: charge soon	Batteri på %d%%: oplad snart
+Battery care	Batteripleje
+Battery care: kept at 80%, running from USB	Batteripleje: holdt på 80%, kører fra USB
+Battery empty: switching off in 10 s to protect it. Plug in to cancel.	Batteriet er tomt: slukker om 10 s for at beskytte det. Sæt strøm til for at annullere.
+Battery low: %d%%	Lavt batteri: %d%%
+Battery pack	Batteripakke
+Battery temperature OK, charging again	Batteritemperatur OK, oplader igen
+Buzzes for the same messages as the sound below, even with Sound off. Do Not Disturb and muted channels stay still.	Vibrerer for de samme beskeder som lyden nedenfor, også med Lyd slået fra. Forstyr ikke og lydløse kanaler forbliver stille.
+Capacity (mAh)	Kapacitet (mAh)
+Charge current	Ladestrøm
+Charge faster than 750 mA?\nLilyGo advises against it for this battery: it heats the cell and wears it out, and a damaged LiPo can swell or catch fire. Only where you can keep an eye on it.	Oplad hurtigere end 750 mA?\nLilyGo fraråder det for dette batteri: det varmer cellen op og slider den, og en beskadiget LiPo kan svulme op eller bryde i brand. Kun hvor du kan holde øje med den.
+Charge limits	Ladegrænser
+Charge only to 80%	Oplad kun til 80%
+Charge to	Oplad til
+Charge to 4.35 V?\nOnly for high-voltage (LiHV) cells. It overcharges a normal LiPo, which can then swell, fail or catch fire.	Oplad til 4,35 V?\nKun til højspændingsceller (LiHV). Det overoplader en almindelig LiPo, som så kan svulme op, svigte eller bryde i brand.
+Charge up to this temperature?\nAbove 45 °C a LiPo wears out fast while charging, and the risk of swelling or fire goes up.	Oplad op til denne temperatur?\nOver 45 °C slides en LiPo hurtigt under opladning, og risikoen for opsvulmning eller brand stiger.
+Charging %d mA · %d mW	Oplader %d mA · %d mW
+Charging back to the safe defaults	Oplader tilbage til de sikre standardværdier
+Charging paused: battery too cold	Opladning på pause: batteriet er for koldt
+Charging paused: battery too cold (%d °C)	Opladning på pause: batteriet er for koldt (%d °C)
+Charging paused: battery too hot	Opladning på pause: batteriet er for varmt
+Charging paused: battery too hot (%d °C)	Opladning på pause: batteriet er for varmt (%d °C)
+Charging paused: too cold	Opladning på pause: for koldt
+Charging paused: too hot	Opladning på pause: for varmt
+Charging: switch-off cancelled	Oplader: slukning annulleret
+Drawing %d mA · %d mW	Bruger %d mA · %d mW
+Faster charging heats and wears the battery.	Hurtigere opladning varmer og slider batteriet.
+Fuel gauge not answering	Batterimåleren svarer ikke
+Fuel gauge set. It relearns the pack over the next charges.	Batterimåler sat. Den lærer pakken igen over de næste opladninger.
+It resumes 3 °C below the limit.	Den genoptages 3 °C under grænsen.
+Kept at 80% (battery care)	Holdt på 80% (batteripleje)
+Key click	Tasteklik
+Lifting the Pager off the table turns the screen on (a locked Pager shows its lock screen). Only after it lay still, so it stays dark in a bag or pocket.	Når Pageren løftes fra bordet, tændes skærmen (en låst Pager viser sin låseskærm). Kun efter den har ligget stille, så den forbliver mørk i en taske eller lomme.
+Light	Let
+LilyGo fits 1500 mAh. Change it only for a different pack.	LilyGo monterer 1500 mAh. Skift det kun til en anden pakke.
+Low battery warning	Advarsel om lavt batteri
+Lying face down, the screen goes off and the Pager stays silent (no sound, no vibration). Picking it up ends it. Keeps the motion sensor on, a little more power.	Med skærmen nedad slukker skærmen, og Pageren forbliver stille (ingen lyd, ingen vibration). Når den tages op, slutter det. Holder bevægelsessensoren tændt, lidt mere strøm.
+Never below freezing. It resumes 3 °C above the limit.	Aldrig under frysepunktet. Den genoptages 3 °C over grænsen.
+Once	Én gang
+Powering off… hold the power key to switch on	Slukker… hold tænd-knappen for at tænde
+Quiet when face down	Stille med skærmen nedad
+Set the battery to %u mAh?\nOnly if that is the pack fitted. The percentage and time left are recalculated and settle over the next full charge.	Sæt batteriet til %u mAh?\nKun hvis det er den pakke, der sidder i. Procent og resterende tid genberegnes og falder på plads over næste fulde opladning.
+Starting the motion sensor…	Starter bevægelsessensoren…
+Stop charging above	Stop opladning over
+Stop charging below	Stop opladning under
+Stopping lower gives a little less capacity and a longer battery life.	At stoppe lavere giver lidt mindre kapacitet og en længere batterilevetid.
+Stops charging at 80%, starts again below 75%. Kept off a full charge, the pack lasts noticeably longer; turn it off before a long day away from power.	Stopper opladning ved 80%, starter igen under 75%. Holdt fra fuld opladning holder pakken mærkbart længere; slå det fra før en lang dag væk fra strøm.
+Strength	Styrke
+Strong	Stærk
+Switch the temperature guard off?\nThe Pager then charges a hot or frozen battery. Charging below 0 °C damages the cell inside and can cause a short later; charging it hot risks swelling and fire.	Slå temperaturvagten fra?\nPageren oplader så et varmt eller frosset batteri. Opladning under 0 °C skader cellen indvendigt og kan give en kortslutning senere; opladning af et varmt batteri giver risiko for opsvulmning og brand.
+The defaults are the safe ones for this battery. Anything past them asks first.	Standardværdierne er de sikre for dette batteri. Alt ud over dem spørger først.
+The fuel gauge did not take the new capacity	Batterimåleren tog ikke imod den nye kapacitet
+The fuel gauge is already set to this	Batterimåleren er allerede sat til dette
+The percentage comes from the battery's fuel gauge, which learns the pack by itself.	Procenten kommer fra batteriets batterimåler, som selv lærer pakken at kende.
+Twice	To gange
+Use anyway	Brug alligevel
+Used today %d mAh · yesterday %s	Brugt i dag %d mAh · i går %s
+Wake when picked up	Væk når den tages op
+Warns with a vibration at 20%, again at 10%, and switches the Pager off at 3%, so the battery is never run flat.	Advarer med en vibration ved 20%, igen ved 10%, og slukker Pageren ved 3%, så batteriet aldrig løber helt tomt.
+last 5 min charging	seneste 5 min opladning
+last 5 min drawing	seneste 5 min forbrug
+not known	ukendt
+Picture dimming	Dæmpning af billede
+Wallpaper dimming	Dæmpning af baggrund
+Darker with Night, lighter with Day, so the text on it stays readable.	Mørkere med Nat, lysere med Dag, så teksten på den kan læses.
+Asking the time server	Spørger tidsserveren
+Auto-delete old contacts	Auto-slet gamle kontakter
+Buzz for new messages, even with Sound off. Respects Do Not Disturb.	Vibrer ved nye beskeder, også med Lyd slået fra. Respekterer Forstyr ikke.
+Connections	Forbindelser
+Days	Dage
+Deletes contacts not heard from in the number of days below. Favourites are never deleted.	Sletter kontakter, der ikke er hørt fra i det antal dage, der står nedenfor. Favoritter slettes aldrig.
+Downloaded to this computer, and kept in this browser.	Downloadet til denne computer og gemt i denne browser.
+Import from this computer	Importer fra denne computer
+In the browser, the connection is set in the page bar: Connect reaches your node over Bluetooth, USB or Wi-Fi.	I browseren sættes forbindelsen i sidelinjen: Forbind når din node over Bluetooth, USB eller Wi-Fi.
+In the browser, the connection is set in the page bar: Connect reaches your node over Wi-Fi, USB or Bluetooth.	I browseren sættes forbindelsen i sidelinjen: Forbind når din node over Wi-Fi, USB eller Bluetooth.
+No position yet. Allow this page to use your location when the browser asks.	Ingen position endnu. Tillad denne side at bruge din position, når browseren spørger.
+Not heard from for this many days, 1 to 999.	Ikke hørt fra i så mange dage, 1 til 999.
+Pattern	Mønster
+Plays once for a message, twice for a DM, three times for an @ mention. Tap one to feel it.	Afspilles én gang for en besked, to gange for en DM, tre gange for en @-omtale. Tryk på en for at mærke den.
+Remove old contacts	Fjern gamle kontakter
+The map downloads through this computer's own network. Your node's Wi-Fi is set on the node.	Kortet downloades gennem denne computers eget netværk. Din nodes Wi-Fi sættes på noden.
+Vibrate	Vibrer
+Vibration	Vibration
+Your node's own Bluetooth and pairing code are set on the node.	Din nodes egen Bluetooth og parringskode sættes på noden.
+Edit in Settings > Quick replies	Rediger i Indstillinger > Hurtige svar
+Turn the knob • click to insert	Drej knappen • klik for at indsætte
+Vibrate on keys	Vibrer ved tastetryk
+A short click for each keypress and each turn of the knob.	Et kort klik for hvert tastetryk og hver drejning af knappen.
+Keys and the knob do nothing until you hold Backspace.	Taster og knappen gør intet, før du holder Backspace.
+Moving aurora stays still while Battery saver is on (Settings > Battery).	Bevægeligt nordlys står stille, mens Batterisparing er slået til (Indstillinger > Batteri).
+Shift + click: volume	Shift + klik: lydstyrke
+Shift + click: brightness	Shift + klik: lysstyrke
+Keys and shortcuts	Taster og genveje
+Turn to scroll, click or any key to close.	Drej for at rulle, klik eller en vilkårlig tast for at lukke.
+Knob	Knap
+Move, click to select	Flyt, klik for at vælge
+Hold knob	Hold knappen
+Fn + turn	Fn + drej
+Next tab, or scroll inside a screen	Næste fane, eller rul inde på en skærm
+Shift + turn	Shift + drej
+Screen brightness	Skærmens lysstyrke
+Shift + click	Shift + klik
+Switch the knob to volume	Skift knappen til lydstyrke
+Hold Shift	Hold Shift
+Quiet now (Do Not Disturb) on / off	Stille nu (Forstyr ikke) til / fra
+Hold Fn	Hold Fn
+This help	Denne hjælp
+Back (deletes while typing)	Tilbage (sletter, mens du skriver)
+Hold Backspace	Hold Backspace
+Back from a text field; unlock	Tilbage fra et tekstfelt; lås op
+Hold Space	Hold Mellemrum
+Lock the screen	Lås skærmen
+Hold Enter	Hold Enter
+More actions (like a long press)	Flere handlinger (som et langt tryk)
+Tabs (Settings > Keyboard)	Faner (Indstillinger > Tastatur)
+Hold H / Hold S	Hold H / Hold S
+Launcher options / Control panel	Launcher-indstillinger / Kontrolpanel
+Hold a letter	Hold et bogstav
+Accents and umlauts	Accenter og omlyd
+Fn + Shift	Fn + Shift
+Caps Lock while typing	Caps Lock mens du skriver
+Fn + Backspace	Fn + Backspace
+Fn + Enter	Fn + Enter
+Fn + click	Fn + klik
+Special characters while typing	Specialtegn mens du skriver
+In a chat: jump to new messages	I en chat: spring til nye beskeder
+W A S D,  Q / E	W A S D,  Q / E
+Pan the map; adjust a slider	Panorer kortet; juster en skyder
+Quiet now: on (hold Shift again to end)	Stille nu: til (hold Shift igen for at afslutte)
+Quiet now: off	Stille nu: fra
+Quiet now	Stille nu
+Do Not Disturb until you switch it off. Holding Shift does the same from anywhere.	Forstyr ikke, indtil du slår det fra. At holde Shift gør det samme hvor som helst.
+Backspace	Backspace
+M  C  H  A  S	M  C  H  A  S
+N	N
+Mute colours and animations	Dæmp farver og animationer
+Mute colours and animations sets these for now.	Dæmp farver og animationer sætter disse indtil videre.
+Nothing moves, no boot animation, quiet colours and solid panels. Your other colour choices come back when it is off.	Intet bevæger sig, ingen opstartsanimation, afdæmpede farver og massive paneler. Dine andre farvevalg kommer tilbage, når det er slået fra.
+Slate	Skifer
+Sepia	Sepia
+Grey	Grå
+Sage	Salvie
+Dusk	Skumring
+Tone the whole screen	Farvetone på hele skærmen
+Off: only the accent takes the tone.	Fra: kun accenten får farvetonen.
+%d book(s)	%d bog/bøger
+A chapter is missing from this book	Et kapitel mangler i denne bog
+Apply the new look? The Pager restarts to apply it.	Anvend det nye udseende? Pageren genstarter for at anvende det.
+Back to book	Tilbage til bogen
+Books	Bøger
+Cannot open this book	Kan ikke åbne denne bog
+Cannot read this file	Kan ikke læse denne fil
+Cannot show this image	Kan ikke vise dette billede
+Chapters	Kapitler
+Continue reading	Fortsæt læsning
+Earlier chapters	Tidligere kapitler
+Ebook needs a newer firmware	E-bog kræver en nyere firmware
+End of book	Bogens slutning
+External LoRa antenna	Ekstern LoRa-antenne
+Images	Billeder
+Later chapters	Senere kapitler
+No books. Add .epub files to this app's folder.	Ingen bøger. Tilføj .epub-filer til denne apps mappe.
+No data from the receiver	Ingen data fra modtageren
+No login reply, tracing instead…	Intet login-svar, sporer i stedet…
+No readable chapters	Ingen læsbare kapitler
+Not an epub	Ikke en epub
+Opening...	Åbner...
+Receiver is talking at	Modtageren taler med
+Section	Sektion
+Start of book	Bogens start
+The book index is too large	Bogens indeks er for stort
+This book is compressed. Repack it with scripts/ebook-prep.py	Denne bog er komprimeret. Pak den om med scripts/ebook-prep.py
+Use external	Brug ekstern
+Use the external antenna?\nOnly with an antenna fitted: transmitting into an empty socket can destroy the radio.	Brug den eksterne antenne?\nKun med en antenne monteret: at sende ind i et tomt stik kan ødelægge radioen.
+Uses the external socket instead of the on-board antenna. Only with an antenna fitted.	Bruger det eksterne stik i stedet for den indbyggede antenne. Kun med en antenne monteret.
+View image	Vis billede
+image	billede
+reacted	reagerede
+reacted to	reagerede på
+Hide MediaMesh and TAK texts	Skjul MediaMesh- og TAK-tekster
+Apps like MeshCore Open TAK send photos, voice and team tracking as text. Messages between apps are dropped, and the rest become a short label such as Photo. A connected phone app still gets everything.	Apps som MeshCore Open TAK sender fotos, tale og holdsporing som tekst. Beskeder mellem apps droppes, og resten bliver en kort etiket som Foto. En forbundet telefon-app får stadig det hele.
+MediaMesh and TAK texts will be hidden	MediaMesh- og TAK-tekster bliver skjult
+MediaMesh and TAK texts will be shown	MediaMesh- og TAK-tekster bliver vist
+Photo	Foto
+Voice message	Talebesked
+Push-to-talk	Tryk-for-at-tale
+Encrypted message	Krypteret besked
+30 sec	30 sek
+Peak -- dBm	Top -- dBm
+Peak %d dBm @ %.1f MHz	Top %d dBm @ %.1f MHz
+peak %d @ %.1f	top %d @ %.1f
+Asleep: tap screen or 🤍 to wake	Sover: tryk på skærmen eller 🤍 for at vække
+Receiving %s\n%lu / %lu bytes	Modtager %s\n%lu / %lu bytes
+Sending %s\n%lu / %lu bytes	Sender %s\n%lu / %lu bytes
+File Transfer	Filoverførsel
+U	U
+Unread only	Kun ulæste
+No unread chats	Ingen ulæste chats
+No unread channels	Ingen ulæste kanaler
+No unread direct chats	Ingen ulæste direkte chats
+Recent	Seneste
+Smileys	Smileys
+People	Mennesker
+Nature	Natur
+Food	Mad
+Activity	Aktivitet
+Travel	Rejser
+Objects	Genstande
+Symbols	Symboler
+Flags	Flag
+Chars	Tegn
+Lifting the device off the table turns the screen on (a locked device shows its lock screen). Only after it lay still, so it stays dark in a bag or pocket.	Når enheden løftes fra bordet, tændes skærmen (en låst enhed viser sin låseskærm). Kun efter den har ligget stille, så den forbliver mørk i en taske eller lomme.
+Lying face down, the screen goes off and the device stays silent. Picking it up ends it. Keeps the motion sensor on, a little more power.	Med skærmen nedad slukker skærmen, og enheden forbliver stille. Når den tages op, slutter det. Holder bevægelsessensoren tændt, lidt mere strøm.
+Warns at 20%, again at 10%, and enters deep sleep at 3% so the battery is never run flat.	Advarer ved 20%, igen ved 10%, og går i dyb dvale ved 3% så batteriet aldrig løber helt tomt.
+\n%d%%, about %lu s left	\n%d%%, cirka %lu s tilbage
+\n%d%%, about %lu min left	\n%d%%, cirka %lu min tilbage
+Keep this orientation?\nIf the screen does not answer your taps, leave it: it goes back to portrait in %d s.	Behold denne orientering?\nHvis skærmen ikke reagerer på dine tryk, så lad den være: den går tilbage til stående om %d s.
+Back to portrait… restarting	Tilbage til stående… genstarter
+Keep	Behold
+Orientation kept	Orientering beholdt
+Unplug USB, then calibrate with a full battery	Tag USB ud, og kalibrer så med fuldt batteri
+Ctrl+Shift on a Bluetooth keyboard does the same.	Ctrl+Shift på et Bluetooth-tastatur gør det samme.
+Ctrl+Shift switches the keyboard language. While it is Bulgarian, the keys type Bulgarian phonetic.	Ctrl+Shift skifter tastaturets sprog. Mens det er bulgarsk, skriver tasterne bulgarsk fonetisk.
+Now in %s	Nu på %s
+cities.bin could not be read	cities.bin kunne ikke læses
+City on Home	By på Hjem
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Med en cities.bin-grænsefil på SD-kortet viser Hjem den by, du er i, i stedet for nodens navn.
+Allow	Tillad
+Allow %s to use the web console?	Tillad %s at bruge webkonsollen?
+Allow once	Tillad én gang
+Always allow	Tillad altid
+Deny	Afvis
+a browser	en browser
+Browser	Browser
+It will see your chats and contacts, and can send messages, change settings and control this screen.	Den vil kunne se dine chats og kontakter og kan sende beskeder, ændre indstillinger og styre denne skærm.
+The web console wants to:	Webkonsollen vil:
+Only allow this if you started it in the browser yourself.	Tillad det kun, hvis du selv har startet det i browseren.
+Are you sure?	Er du sikker?
+Web console	Webkonsol
+Web console (recommended)	Webkonsol (anbefalet)
+Web console off	Webkonsol fra
+Web console on (connect Wi-Fi to reach it)	Webkonsol til (forbind Wi-Fi for at nå den)
+Web console on: http://%s:%s/	Webkonsol til: http://%s:%s/
+Chats, contacts, settings, a mesh terminal, the live screen and file transfer - all in one browser page. A new browser needs your OK here first. No reboot.	Chats, kontakter, indstillinger, en mesh-terminal, den levende skærm og filoverførsel - alt på én browserside. En ny browser skal først godkendes her. Ingen genstart.
+Trusted browsers	Betroede browsere
+No trusted browsers. Choose "Always allow" when a browser asks.	Ingen betroede browsere. Vælg "Tillad altid", når en browser spørger.
+Disconnect all browsers	Afbryd alle browsere
+Browsers disconnected. They must ask again unless trusted.	Browsere afbrudt. De skal spørge igen, medmindre de er betroede.
+Runs the whole interface at browser size, for devices without a usable screen; the panel shows a placeholder. The web console's Screen tab already shows this screen without it. Toggling reboots the device.	Kører hele brugerfladen i browserstørrelse, til enheder uden en brugbar skærm; panelet viser en pladsholder. Webkonsollens Skærm-fane viser allerede denne skærm uden det. Skift genstarter enheden.
+Download a settings backup. It holds this node's private key.	Download en sikkerhedskopi af indstillinger. Den indeholder denne nodes private nøgle.
+Restore a settings backup. It replaces this node's identity, channels and contacts, then restarts.	Gendan en sikkerhedskopi af indstillinger. Den erstatter denne nodes identitet, kanaler og kontakter, og genstarter så.
+This page changed on the device. Reloading.	Denne side er ændret på enheden. Genindlæser.
+Settings are open on the device. Close them there and try again.	Indstillinger er åbne på enheden. Luk dem der, og prøv igen.
+Someone is typing on the device. Try again in a moment.	Nogen skriver på enheden. Prøv igen om et øjeblik.
+Waiting for an answer on the device.	Venter på et svar på enheden.
+This app has no settings	Denne app har ingen indstillinger
+Saved on the device for this app. The app reads them when it opens.	Gemt på enheden for denne app. Appen læser dem, når den åbner.
+Could not save to the device storage	Kunne ikke gemme på enhedens lager
+4G: calls, SMS and mobile data	4G: opkald, SMS og mobildata
+"%s" wants to use the 4G modem.\n\nIt will be able to make calls, send SMS and use mobile data on your SIM card, under your phone number. This can cost money.\n\nYou can take it back under Settings > Apps.	"%s" vil bruge 4G-modemet.\n\nDen vil kunne ringe op, sende SMS og bruge mobildata på dit SIM-kort under dit telefonnummer. Det kan koste penge.\n\nDu kan tage det tilbage under Indstillinger > Apps.
+Unknown number	Ukendt nummer
+Answer	Svar
+Reject	Afvis
+Hang up	Læg på
+Incoming call	Indgående opkald
+Calling...	Ringer op...
+Ringing...	Det ringer...
+On hold	Venter
+hold the bubble pad to unlock	hold boble-tasten for at låse op
+Locks when screen off\n(hold the bubble pad to unlock)	Låser når skærmen slukkes\n(hold boble-tasten for at låse op)
+APN (e.g. internet)	APN (fx internet)
+Call	Ring op
+Call ended	Opkald afsluttet
+Data	Data
+Data connected %s	Data forbundet %s
+Data disconnected	Data afbrudt
+Data off	Data fra
+Data on	Data til
+Ended	Afsluttet
+Enter number	Indtast nummer
+Fetching example.com...	Henter example.com...
+Keypad	Taster
+Message to %s (max 70)	Besked til %s (maks 70)
+Mobile network	Mobilnet
+Modem not responding	Modem svarer ikke
+Modem off	Modem slukket
+Mute	Mik fra
+Network	Net
+Network denied	Netværk afvist
+No SIM card	Intet SIM-kort
+PIN needed	PIN mangler
+PIN saved	PIN gemt
+PUK locked	PUK-låst
+Press keys	Tryk taster
+Recent calls	Seneste opkald
+SIM PIN (empty = none)	SIM PIN (tom = ingen)
+SIM PUK locked	SIM PUK-låst
+SIM locked	SIM låst
+SMS failed	SMS fejlede
+SMS from %s	SMS fra %s
+SMS sent	SMS sendt
+Searching for network...	Søger netværk...
+Sending...	Sender...
+Set the PIN under %s	Sæt PIN under %s
+Starting modem...	Starter modem...
+Tap %s to turn on	Tryk %s for at tænde
+Test data	Test net
+This device has no 4G modem.	Denne enhed har intet 4G-modem.
+To number	Til nummer
+Unmute	Mik til
+Volume %d	Lydstyrke %d
+Working...	Arbejder...
+data	data
+default	standard
+error	fejl
+missing	mangler
+no calls yet	ingen opkald endnu
+no messages	ingen beskeder
+no signal	intet signal
+ready	klar

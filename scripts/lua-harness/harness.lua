@@ -3164,6 +3164,37 @@ end
 -- True (and says so) when this app has no scenarios of its own. Returning a
 -- truthy value makes the dispatch below pick an EMPTY list rather than running
 -- someone else's tests against it.
+-- ---------- MECP ----------
+-- A local of the app, reached through a function that closes over it.
+local function upvalue(f, name)
+  for i = 1, 255 do
+    local n, v = debug.getupvalue(f, i)
+    if not n then break end
+    if n == name then return v end
+  end
+  error(name .. " is not an upvalue")
+end
+
+scenarios.mecp_encode = function()
+  cfg = { w = 320, h = 240, caps = { sdk_ext = true } }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  local st = upvalue(app.on_open, "st")
+  local encode = upvalue(upvalue(app.on_open, "compose"), "encode")
+  local fix = function() return { lat = 48.652, lon = 20.1305 } end
+  local function check(what, codes, pax, gps_on, has_fix, want)
+    st.codes, st.pax, st.gps, cfg.gps = codes, pax, gps_on, has_fix and fix or nil
+    local got = encode()
+    print(string.format("  %-24s %s", what, got))
+    assert(got == want, what .. ": want " .. want .. ", got " .. got)
+  end
+  check("added with a fix", { "M01" }, 2, true, true, "MECP/3/M01 P05 2pax 48.6520,20.1305")
+  check("picked, kept in place", { "P05", "M01" }, 2, true, true, "MECP/3/P05 M01 2pax 48.6520,20.1305")
+  check("picked, no fix", { "M01", "P05" }, 2, true, false, "MECP/3/M01 P05 2pax")
+  check("not picked, no fix", { "M01" }, 2, true, false, "MECP/3/M01 2pax")
+  check("position off", { "M01" }, 2, false, true, "MECP/3/M01 2pax")
+end
+
 local function UNTESTED_APPS()
   io.write("== no scenarios for this app; nothing was tested\n")
   return true
@@ -3199,6 +3230,8 @@ local order = APP_PATH:find("/sdscan/", 1, true)
   and { "ping_tdeck", "ping_v4", "ping_no_contacts", "ping_round_trip", "ping_auto_reply", "ping_cost" }
   or APP_PATH:find("/inputlen.lua", 1, true)
   and { "inputlen_random", "inputlen_input" }
+  or APP_PATH:find("/mecp/", 1, true)
+  and { "mecp_encode" }
   or APP_PATH:find("/mapfetch/", 1, true)
   and { "mapfetch_tdeck", "mapfetch_no_map", "mapfetch_no_gps", "mapfetch_swipe", "mapfetch_logic", "mapfetch_done", "mapfetch_cost" }
   -- The compass list below is gpscompass's own, NOT a default. An app with no

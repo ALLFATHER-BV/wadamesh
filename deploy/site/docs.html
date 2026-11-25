@@ -172,7 +172,7 @@
     <a href="#discover">Discover &amp; wardriving</a>
     <div class="grp">With your phone</div>
     <a href="#companion">Companion mode</a>
-    <a href="#remote">Remote &amp; web app</a>
+    <a href="#remote">Remote &amp; web console</a>
     <a href="#web">Web browser</a>
     <div class="grp">Reference</div>
     <a href="#updates">Updates &amp; test builds</a>
@@ -219,7 +219,7 @@
           <p><b>Hold any widget</b>, or an empty part of Home, to arrange. Drag a widget to another place (the others step aside), tap the minus to remove it, tap an empty cell to add one, and tap a widget for its sizes and what it shows. <b>Done</b> saves. With keys, open <b>Settings &rarr; Display &rarr; Home &rarr; Arrange Home</b>: Enter on a widget gives the same choices, and Move shows where it can go. Boards that turn keep a layout for each way up.</p>
           <p><b>Settings &rarr; Display &rarr; Home</b> also starts you over from a preset: <b>Glance</b> (the default), <b>Commander</b> (the old status page, rebuilt from widgets), <b>Radio</b>, <b>Minimal</b> (a big clock) and, with the V4 Expansion Kit, <b>Sensors</b>.</p>
           <h3>App drawer</h3>
-          <p>A tile for everything on the device, in rows by kind: talking to people (Chats, Contacts, Mentions, Map), the radio tools in amber (Advertise, Signal, Discover, Spectrum), and the system (Terminal, Remote, VNC, Settings, then Files, Store, Home and Power further down). Unread messages show as a count on the Chats tile, and apps you install from the Store get a tile here too. Tap the Home button again (<b>H</b> on the T-LoRa Pager), or the <b>Home</b> tile, to go back to your widgets.</p>
+          <p>A tile for everything on the device, in rows by kind: talking to people (Chats, Contacts, Mentions, Map), the radio tools in amber (Advertise, Signal, Discover, Spectrum), and the system (Terminal, Remote, Settings, then Files, Store, Home and Power further down). Unread messages show as a count on the Chats tile, and apps you install from the Store get a tile here too. Tap the Home button again (<b>H</b> on the T-LoRa Pager), or the <b>Home</b> tile, to go back to your widgets.</p>
           <h3>Choosing between them</h3>
           <p><b>Hold the Home tab</b> for the launcher settings: whether the Home button opens your widgets or the App drawer, and whether the app icons are compact or large. The same sheet is under <b>Settings &rarr; Display &rarr; Launcher layout</b>. On the T-LoRa Pager, hold its Home key, <b>H</b>.</p>
           <h3>The status bar</h3>
@@ -658,33 +658,40 @@
     </section>
 
     <section class="doc" id="remote">
-      <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/><line x1="2" y1="20" x2="2.01" y2="20"/></svg></span> Remote &amp; web app</h2>
+      <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/><line x1="2" y1="20" x2="2.01" y2="20"/></svg></span> Remote &amp; web console</h2>
       <div class="row">
         <div class="prose">
-          <p>Over Wi-Fi, a WADAMESH device can put its screen, or a whole browser app, on your phone or laptop. There is nothing to install: the device serves a web page you open in any browser on the same network. Turn it on from <b>Home &rarr; Remote</b>, pick a mode, and open the address it shows.</p>
-          <h3>Three ways to connect</h3>
+          <p>Over Wi-Fi, a WADAMESH device serves its own <b>web console</b>: one page in any browser on the same network that shows the device's screen and runs it from your phone or laptop. There is nothing to install. Open <b>Home &rarr; Remote</b>, switch on <b>Web console</b>, and open the address it shows.</p>
+          <h3>The web console</h3>
           <ul>
-            <li><b>Remote app</b> (recommended): a full control panel, native to the browser, with <b>Chats</b>, <b>Contacts</b>, a <b>Terminal</b> and <b>Settings</b>, and live message notifications. Run the device entirely from your phone.</li>
-            <li><b>Screen mirror (VNC)</b>: streams the device's live screen to the browser and sends your taps and key presses back, so you see and drive exactly what is on the device, in real time.</li>
-            <li><b>Remote UI</b>: renders the interface off-screen at desktop size (a wide landscape layout) and streams that instead of the small panel, for a roomier view on a big screen.</li>
+            <li><b>Dashboard</b>: battery, signal, radio, packets, connections, memory, storage, contacts and recently heard nodes, kept up to date.</li>
+            <li><b>Mesh</b>: Chats, Contacts (including newly discovered nodes) and a Terminal for the MeshCore CLI, built for a phone screen.</li>
+            <li><b>Screen</b>: the device's live screen in the browser. Taps and key presses in the browser go back to the device, so you see and drive exactly what is on it.</li>
+            <li><b>Files</b>: upload, back up and restore files on the device, on boards with File Transfer.</li>
+            <li><b>Settings</b>: every device setting, saved to the device.</li>
           </ul>
-          <p>Screen mirror and Remote UI both show the interface you already know from the device, mirrored or drawn larger. The <b>Remote app</b> is different: a browser-native panel built for a phone, shown below.</p>
           <h3>Turning it on</h3>
-          <p>Connect the device to Wi-Fi first, then open <b>Home &rarr; Remote</b>. The screen shows the address to type into your browser (like <code>http://192.168.1.42</code>) and a switch for each mode. Only one streaming mode runs at a time, and the phone and the device must be on the same Wi-Fi network.</p>
+          <p>Connect the device to Wi-Fi first, then open <b>Home &rarr; Remote</b> and switch on <b>Web console</b>. The page shows the address to type into your browser (like <code>http://192.168.1.42:8765</code>); the phone and the device must be on the same Wi-Fi network. No reboot is needed.</p>
+          <p>The first time a browser connects, the device asks: <b>Allow</b>, <b>Always allow</b> or <b>Deny</b>. Browsers you always allow appear under <b>Trusted browsers</b> on the Remote page, where you can remove one, or use <b>Disconnect all browsers</b>. Actions that can't be undone from the browser, such as factory reset, power off, a firmware update, or formatting or restoring the SD card, wait for <b>Allow</b> on the device each time.</p>
+          <h3>Other modes on the Remote page</h3>
+          <ul>
+            <li><b>Remote UI</b>: runs the whole interface at browser size, optionally as a wide landscape layout, for devices without a usable screen; the panel shows a placeholder. Switching it on or off reboots the device. For seeing the screen you don't need it: the console's Screen tab already does that.</li>
+            <li><b>Console mode</b> (experimental): boots into a text console with no graphical interface, for boards that struggle with the full UI.</li>
+          </ul>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/app_remote.png?v=92" alt="Remote access screen on the device"></div><div class="cap">Remote: turn it on, then open the address</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/app_remote.png?v=92" alt="Remote access screen on the device"></div><div class="cap">Remote: switch on the web console, then open the address</div></div>
       </div>
 
-      <div class="subh">The remote app in a browser</div>
-      <div class="prose" style="max-width:70ch"><p>The remote app is phone-first. It carries the same status icons as the device (signal, Wi-Fi, Bluetooth, battery), pops up a notification when a message arrives, and refreshes an open chat on its own as replies come in, so you rarely need to touch the device itself. Long-press a message for <b>Copy</b> and <b>Info</b>; on a channel, someone else's message also offers <b>Reply</b>, which starts your message with <code>@[their name]</code>.</p></div>
+      <div class="subh">The Mesh tab in a browser</div>
+      <div class="prose" style="max-width:70ch"><p>The Mesh tab is phone-first. It carries the same status icons as the device (signal, Wi-Fi, Bluetooth, battery), pops up a notification when a message arrives, and refreshes an open chat on its own as replies come in, so you rarely need to touch the device itself. Long-press a message for <b>Copy</b> and <b>Info</b>; on a channel, someone else's message also offers <b>Reply</b>, which starts your message with <code>@[their name]</code>.</p></div>
       <div class="webgrid">
-        <figure class="phone"><img src="docs-img/web_chats.png" alt="Chats tab in the web app"><figcaption>Chats: DMs, channels, unread badges</figcaption></figure>
-        <figure class="phone"><img src="docs-img/web_chat.png" alt="A conversation in the web app"><figcaption>A conversation, with delivery ticks</figcaption></figure>
-        <figure class="phone"><img src="docs-img/web_contacts.png" alt="Contacts tab in the web app"><figcaption>Contacts: search, sort, filter</figcaption></figure>
-        <figure class="phone"><img src="docs-img/web_contact_sheet.png" alt="Contact actions in the web app"><figcaption>Tap a contact for actions</figcaption></figure>
-        <figure class="phone"><img src="docs-img/web_discovered.png" alt="Discovered nodes in the web app"><figcaption>Discovered nodes: add with a tap</figcaption></figure>
-        <figure class="phone"><img src="docs-img/web_settings.png" alt="Settings in the web app"><figcaption>Settings, including live radio</figcaption></figure>
-        <figure class="phone"><img src="docs-img/web_terminal.png" alt="Terminal in the web app"><figcaption>Terminal: the MeshCore CLI</figcaption></figure>
+        <figure class="phone"><img src="docs-img/web_chats.png" alt="Chats in the web console"><figcaption>Chats: DMs, channels, unread badges</figcaption></figure>
+        <figure class="phone"><img src="docs-img/web_chat.png" alt="A conversation in the web console"><figcaption>A conversation, with delivery ticks</figcaption></figure>
+        <figure class="phone"><img src="docs-img/web_contacts.png" alt="Contacts in the web console"><figcaption>Contacts: search, sort, filter</figcaption></figure>
+        <figure class="phone"><img src="docs-img/web_contact_sheet.png" alt="Contact actions in the web console"><figcaption>Tap a contact for actions</figcaption></figure>
+        <figure class="phone"><img src="docs-img/web_discovered.png" alt="Discovered nodes in the web console"><figcaption>Discovered nodes: add with a tap</figcaption></figure>
+        <figure class="phone"><img src="docs-img/web_settings.png" alt="Settings in the web console"><figcaption>Settings, including live radio</figcaption></figure>
+        <figure class="phone"><img src="docs-img/web_terminal.png" alt="Terminal in the web console"><figcaption>Terminal: the MeshCore CLI</figcaption></figure>
       </div>
     </section>
 

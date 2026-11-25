@@ -877,7 +877,7 @@ bool WebSocketCompanionServer::servePage(int idx) {
   };
   const bool on[] = { term || screen || files, term || screen || files, term, screen, files, settings, settings };
 
-  char hdr[400];
+  char hdr[512];
   for (size_t i = 0; i < sizeof(pages) / sizeof(pages[0]); i++) {
     if (strcmp(path, pages[i].path) != 0) continue;
     if (!on[i]) {
@@ -897,9 +897,11 @@ bool WebSocketCompanionServer::servePage(int idx) {
       "Cache-Control: no-store\r\n"
       "Content-Security-Policy: default-src 'self'; connect-src 'self' ws: wss:; "
       "style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data: blob:; "
-      "frame-ancestors 'self'\r\n"
+      // Firefox checks an <a download> to a blob: URL against frame-src (#906).
+      "frame-src 'self' blob:; frame-ancestors 'self'\r\n"
       "X-Content-Type-Options: nosniff\r\n"
       "Connection: close\r\n\r\n", (unsigned)pages[i].len);
+    if (n <= 0 || n >= (int)sizeof hdr) return false;   // a longer header must never send past hdr
     // The headers fit one probed write; the body is queued for drainPage, which pushes
     // only what the socket takes now. A blocking write here held the main loop for as
     // long as the browser took to ACK (#854 review: up to 1.5 s per page).

@@ -118,6 +118,11 @@ right of the message input, next to Send. With the caret at the end of the
 input, press Right to move to emoji, and Right again to move to **#**; Left
 walks back to the input. Press **OK** on either button to open its picker.
 
+Right once more reaches Send, and Right past Send moves to the conversation
+header at the top of the screen. Press **OK** there to open the chat's settings,
+the same list that Triangle opens on its row in the chat list, without first
+walking Up through every message.
+
 In the symbol grid, use all four arrows to move the highlight and **OK** to
 insert the selected character.
 

@@ -952,6 +952,7 @@ static void wcaScan() {
   s_wca_gen = gen;
 }
 static void wcaApps() {
+  if (!wcaEnsure()) { s_wca_n = 0; return; }   // the category list gets here before any aview
   if (s_wca_gen != s_lua_inst_gen || !s_lua_inst_valid) wcaScan();
 }
 static const WcApp* wcaFind(const char* id) {
