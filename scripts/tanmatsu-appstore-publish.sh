@@ -11,7 +11,7 @@
 #   1. builds the Tanmatsu app (unless --skip-build) and verifies it
 #   2. syncs our fork (B0N3-GD/app-repository) to upstream main
 #   3. (re)stages deploy/tanmatsu-app/com.wadamesh.wadamesh/ + the fresh binary,
-#      setting `version` and every application `revision`
+#      setting `version`, every application `revision` and `bsp_version`
 #   4. pushes an `update-wadamesh-<version>` branch and opens/updates a PR to
 #      Nicolai-Electronics/app-repository
 #
@@ -23,6 +23,9 @@
 #    listing wording free of "touch" — the canonical text lives in the template.
 #  - For an update you MUST bump BOTH `version` AND `revision` or the launcher
 #    won't offer it. This script bumps both.
+#  - `bsp_version` is the MAJOR badge-bsp version the binary was built with, read from
+#    tanmatsu/dependencies.lock (0.x and 1.x -> 1). The launcher uses it to tell whether
+#    an app supports the replacement Tanmatsu display (needs badge-bsp 2.x -> 2).
 #  - The CLA is signed once per GitHub user (Kaj), so follow-up PRs auto-pass.
 #  - First run can't sync until PR #55 (the initial add) is merged; until then
 #    the fork's main lacks the folder, but step 3 re-stages it in full anyway.
@@ -49,6 +52,7 @@ SLUG=com.wadamesh.wadamesh
 WADAMESH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"          # repo root
 TPL="$WADAMESH/deploy/tanmatsu-app/$SLUG"                            # versioned template (icons/README/metadata)
 BIN="$WADAMESH/tanmatsu/build/tanmatsu/application.bin"              # IDF build output
+LOCK="$WADAMESH/tanmatsu/dependencies.lock"                          # resolved IDF components
 FORK_DIR="${WADAMESH_APPSTORE_FORK:-/Users/kaj/wadamesh-appstore-fork}"
 UPSTREAM=Nicolai-Electronics/app-repository
 GHUSER="$(gh api user -q .login)"
@@ -98,10 +102,18 @@ cp "$TPL/icon16.png" "$TPL/icon32.png" "$TPL/icon64.png" "$TPL/README.md" "$APP/
 cp "$WADAMESH/LICENSE" "$APP/LICENSE"
 cp "$WADAMESH/NOTICE"  "$APP/NOTICE"      # MeshCore (MIT) + other third-party attribution
 cp "$BIN" "$APP/wadamesh.bin"
-python3 - "$TPL/metadata.json" "$APP/metadata.json" "$VERSION" "$REVISION" <<'PY'
+python3 - "$TPL/metadata.json" "$APP/metadata.json" "$VERSION" "$REVISION" "$LOCK" <<'PY'
 import json, sys, re
-src, dst, ver, rev = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+src, dst, ver, rev, lock = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]
 m = json.load(open(src))
+# bsp_version = the badge-bsp MAJOR in the lock the binary was built from (0.x/1.x -> 1).
+# Read it, never trust the template: claiming 2 on a 1.x build would offer the app to
+# replacement-display Tanmatsus it cannot drive.
+bsp = re.search(r'^  badgeteam/badge-bsp:\n(?:    .*\n|      .*\n)*?    version: ([0-9]+)\.', open(lock).read(), re.M)
+if not bsp:
+    sys.stderr.write(f"!! no badgeteam/badge-bsp version in {lock}\n")
+    sys.exit(1)
+bsp_version = max(1, int(bsp.group(1)))
 # The launcher store's verify_metadata check restricts name/description to this set
 # (NO commas, NO em-dash). Fail loudly HERE instead of as a red check on the PR.
 pat = r'^[A-Za-z0-9_\- .!@#$%^&*()\/\\]+$'
@@ -111,9 +123,22 @@ for f in ("name", "description"):
         sys.stderr.write(f"!! metadata '{f}' fails the store regex (no comma / em-dash, <=256 chars): {v!r}\n")
         sys.exit(1)
 m["version"] = ver
+apps = []
 for app in m["application"]:
-    app["revision"] = rev
+    out = {}
+    for k, v in app.items():            # the store README wants bsp_version right below revision
+        if k == "bsp_version":
+            continue
+        out[k] = v
+        if k == "revision":
+            out["revision"] = rev
+            out["bsp_version"] = bsp_version
+    if "bsp_version" not in out:
+        out["bsp_version"] = bsp_version
+    apps.append(out)
+m["application"] = apps
 json.dump(m, open(dst, "w"), indent=4); open(dst, "a").write("\n")
+print(f"   bsp_version {bsp_version}")
 PY
 echo "==> staged $SLUG (version $VERSION, revision $REVISION)"
 

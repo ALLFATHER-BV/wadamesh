@@ -2,9 +2,8 @@
     "name": "WadaMesh",
     "description": "MeshCore client running LoRa Wi-Fi & Bluetooth at once. A standalone unit and phone companion in one.",
     "categories": [
-        "tools",
-        "utils",
-        "hardware"
+        "hardware",
+        "tools"
     ],
     "version": "1.0.0",
     "icon": {
@@ -22,6 +21,7 @@
                 "konsool"
             ],
             "revision": 1,
+            "bsp_version": 2,
             "type": "appfs",
             "executable": "wadamesh.bin",
             "assets": []
