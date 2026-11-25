@@ -22,6 +22,7 @@ PAGER_SX1262_ENV="tlora_pager_sx1262_companion_radio_touch"
 PAGER_UNIFIED_ENV="tlora_pager_unified"
 M9_ENV="ThinkNode_M9_companion_radio_touch"
 RAK_ENV="rak_tap_v2_companion_radio_touch"
+TWATCH_ENV="t_watch_s3_companion_radio_touch"
 # The T-Display P4 is not a PlatformIO env: it is a standalone ESP-IDF app built by
 # tdisplay_p4/build.sh (which ends in `exec idf.py ...`). These names are the
 # script's own handles for its panel/radio combinations; they never reach `pio`.
@@ -136,6 +137,7 @@ env_label() {
     "$PAGER_UNIFIED_ENV") echo "LilyGo T-LoRa Pager (unified, experimental)" ;;
     "$M9_ENV")           echo "ThinkNode M9" ;;
     "$RAK_ENV")          echo "RAK TAP V2" ;;
+    "$TWATCH_ENV")       echo "LilyGo T-Watch S3" ;;
     "$P4_ENV")              echo "LilyGo T-Display P4 (AMOLED, SX1262)" ;;
     "$P4_LR2021_ENV")       echo "LilyGo T-Display P4 (AMOLED, LR2021)" ;;
     "$P4_LCD_ENV")          echo "LilyGo T-Display P4 (LCD, SX1262)" ;;
@@ -166,6 +168,7 @@ Devices:
   --pager-unified         LilyGo T-LoRa Pager, either radio (experimental)
   --m9                    ThinkNode M9
   --rak                   RAK TAP V2
+  --twatch-s3             LilyGo T-Watch S3
   --tdisplay-p4              LilyGo T-Display P4, AMOLED + SX1262 (ESP-IDF)
   --tdisplay-p4-lr2021       LilyGo T-Display P4, AMOLED + LR2021 (ESP-IDF)
   --tdisplay-p4-lcd          LilyGo T-Display P4, HI8561 LCD + SX1262 (ESP-IDF)
@@ -222,6 +225,7 @@ prompt_for_device() {
     "$PAGER_SX1262_ENV"
     "$PAGER_UNIFIED_ENV"
     "$RAK_ENV"
+    "$TWATCH_ENV"
     "$P4_ENV"
     "$P4_LR2021_ENV"
     "$P4_LCD_ENV"
@@ -306,6 +310,7 @@ while [ $# -gt 0 ]; do
     --pager-unified) select_env "$PAGER_UNIFIED_ENV" ;;
     --m9)           select_env "$M9_ENV" ;;
     --rak)          select_env "$RAK_ENV" ;;
+    --twatch-s3)    select_env "$TWATCH_ENV" ;;
     --tdisplay-p4)  select_env "$P4_ENV" ;;
     --tdisplay-p4-lr2021) select_env "$P4_LR2021_ENV" ;;
     --tdisplay-p4-lcd) select_env "$P4_LCD_ENV" ;;
