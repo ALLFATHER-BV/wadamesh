@@ -3359,10 +3359,12 @@ int netRequest(lua_State* L) {
   // boot), and a TLS handshake below ~46 KB of free internal heap starves Wi-Fi's
   // own buffers, which next to the map has dropped the link.
   // With mbedtls in PSRAM (#870) an https request costs ~18 KB internal on the M9, nearly
-  // all of it the lua-tls task's 16 KB stack, which must be one contiguous block.
+  // all of it the lua-tls task's 16 KB stack, which must be one contiguous block. The
+  // allocator applies to every PSRAM board, so keep ~14 KB of headroom for Wi-Fi's own
+  // RX/TX buffers after that stack instead of the bare 24 KB measured on the M9.
   const uint32_t kInt = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
   const bool heap_short = tlsAllocIsPsram()
-      ? (heap_caps_get_free_size(kInt) < 24 * 1024 || heap_caps_get_largest_free_block(kInt) < 20 * 1024)
+      ? (heap_caps_get_free_size(kInt) < 32 * 1024 || heap_caps_get_largest_free_block(kInt) < 20 * 1024)
       : heap_caps_get_free_size(kInt) < 46 * 1024;
   if (!luaHostWifiUp() || (https && heap_short)) {
     heap_caps_free(hdrs);
