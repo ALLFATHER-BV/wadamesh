@@ -43,7 +43,6 @@ BOARDS = {
     "manifest-heltec-v4-r8-tft.json": ("wadamesh - Heltec V4-R8 (experimental)", "wadamesh-heltec-v4-r8-tft-merged.bin", "ESP32-S3"),
     "manifest-tlora-pager-lr1121.json": ("wadamesh - LilyGo T-LoRa Pager (LR1121)", "wadamesh-tlora-pager-lr1121-merged.bin", "ESP32-S3"),
     "manifest-tlora-pager-sx1262.json": ("wadamesh - LilyGo T-LoRa Pager (SX1262)", "wadamesh-tlora-pager-sx1262-merged.bin", "ESP32-S3"),
-    "manifest-tlora-pager-unified.json": ("wadamesh - LilyGo T-LoRa Pager (unified, experimental)", "wadamesh-tlora-pager-unified-merged.bin", "ESP32-S3"),
     "manifest-attaky.json":           ("wadamesh - Attaky Core (experimental)", "wadamesh-attaky-merged.bin", "ESP32-S3"),
     "manifest-wio-tracker-l2.json": ("wadamesh - Seeed Wio Tracker L2 (experimental)", "wadamesh-wio-tracker-l2-merged.bin", "ESP32-S3"),
     "manifest-sensecap-indicator.json": ("wadamesh - Seeed SenseCAP Indicator D1L (experimental)", "wadamesh-sensecap-indicator-merged.bin", "ESP32-S3"),
