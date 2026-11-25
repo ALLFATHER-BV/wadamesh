@@ -15199,14 +15199,20 @@ static void txtMenuShow(lv_obj_t* ta) {
 #endif
   for (int a = TXT_CUT; a <= TXT_EMOJI; ++a) acts[n++] = a;
   const int ch = 34, gap = 4, pad = 6;
-  // Fit the row to the panel rather than to a number that happened to work on a
+  // Fit the cells to the panel rather than to a number that happened to work on a
   // 320 px screen: at the old fixed 48 px this was already 268 px wide, so the
-  // sixth cell would have hung off a 240 px board entirely.
+  // sixth cell would have hung off a 240 px board entirely. A cell narrower than
+  // its widest label ("Emoji" is 41 px in the 14 px font) clips the word, so when
+  // one row cannot hold them all at that width the menu takes two balanced rows.
   const lv_coord_t avail = lv_disp_get_hor_res(nullptr) - 8;
+  const int kMinCw = 42;
+  int cols = n;
+  while (cols > 1 && (avail - (cols - 1) * gap - pad * 2) / cols < kMinCw) --cols;
+  const int rows = (n + cols - 1) / cols;
+  cols = (n + rows - 1) / rows;
   int cw = 48;
-  if (n * cw + (n - 1) * gap + pad * 2 > avail)
-    cw = (int)((avail - (n - 1) * gap - pad * 2) / n);
-  if (cw < 28) cw = 28;   // seven cells on a 240 px panel
+  if (cols * cw + (cols - 1) * gap + pad * 2 > avail)
+    cw = (int)((avail - (cols - 1) * gap - pad * 2) / cols);
   s_txtmenu = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_txtmenu);
   lv_obj_set_style_bg_color(s_txtmenu, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
@@ -15216,8 +15222,10 @@ static void txtMenuShow(lv_obj_t* ta) {
   lv_obj_set_style_border_width(s_txtmenu, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(s_txtmenu, pad, LV_PART_MAIN);
   lv_obj_set_style_pad_column(s_txtmenu, gap, LV_PART_MAIN);
-  lv_obj_set_flex_flow(s_txtmenu, LV_FLEX_FLOW_ROW);
-  lv_obj_set_size(s_txtmenu, n * cw + (n - 1) * gap + pad * 2, ch + pad * 2);
+  lv_obj_set_style_pad_row(s_txtmenu, gap, LV_PART_MAIN);
+  lv_obj_set_flex_flow(s_txtmenu, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_set_size(s_txtmenu, cols * cw + (cols - 1) * gap + pad * 2,
+                  rows * ch + (rows - 1) * gap + pad * 2);
   lv_obj_clear_flag(s_txtmenu, LV_OBJ_FLAG_SCROLLABLE);
   for (int i = 0; i < n; ++i) {
     lv_obj_t* c = lv_btn_create(s_txtmenu);
