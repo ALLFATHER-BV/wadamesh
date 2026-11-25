@@ -2486,3 +2486,6 @@ Waiting for an answer on the device.	Válaszra vár az eszközön.
 This app has no settings	Ennek az alkalmazásnak nincsenek beállításai
 Saved on the device for this app. The app reads them when it opens.	Az eszközön mentve ehhez az alkalmazáshoz. Az alkalmazás megnyitáskor olvassa be.
 Could not save to the device storage	Nem sikerült menteni az eszköz tárhelyére
+Phosphor	Foszfor
+Apply the new look? WADAMESH restarts to apply it.	Alkalmazod az új kinézetet? A WADAMESH újraindul.
+With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Ha a cities.bin a /var/lib/wadamesh-zero mappában van, a kezdőképernyő a csomópont neve helyett azt a várost mutatja, ahol vagy.

@@ -12,7 +12,9 @@ for a in "$@"; do
 done
 DATA=/var/lib/wadamesh-zero
 for f in wadamesh-zero wadamesh-desktop wadamesh-hdmi wadamesh-cli wadamesh-launch; do [ ! -f "$f" ] || sudo install -m 755 "$f" /usr/local/bin/ || true; done
-sudo install -m 644 wadamesh-zero.service /etc/systemd/system/wadamesh-zero.service
+# The service runs as the user who installs it (the image's default is pi).
+SVC=$(mktemp); sed "s/^User=pi$/User=$USER/" wadamesh-zero.service > "$SVC"
+sudo install -m 644 "$SVC" /etc/systemd/system/wadamesh-zero.service; rm -f "$SVC"
 sudo install -m 644 wadamesh.desktop /usr/share/applications/wadamesh.desktop
 if [ "$AUTO" = 1 ]; then
   mkdir -p "$HOME/.config/autostart"
@@ -30,7 +32,7 @@ fi
 rm -f "$SUDOERS"
 sudo mkdir -p "$DATA/hooks" "$DATA/logs"
 sudo install -m 755 hooks/on-message.example "$DATA/hooks/on-message.example"
-sudo chown -R pi:pi "$DATA"
+sudo chown -R "$USER:$(id -gn)" "$DATA"
 if [ -d /usr/share/APPLaunch ]; then
   sudo mkdir -p /usr/share/APPLaunch/applications /usr/share/APPLaunch/share/images
   sudo install -m 644 wadamesh-applaunch.desktop /usr/share/APPLaunch/applications/wadamesh.desktop

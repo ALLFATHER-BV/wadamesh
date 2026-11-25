@@ -2489,3 +2489,6 @@ Waiting for an answer on the device.	Czekam na odpowiedź na urządzeniu.
 This app has no settings	Ta aplikacja nie ma ustawień
 Saved on the device for this app. The app reads them when it opens.	Zapisane na urządzeniu dla tej aplikacji. Aplikacja odczytuje je przy otwarciu.
 Could not save to the device storage	Nie udało się zapisać w pamięci urządzenia
+Phosphor	Fosfor
+Apply the new look? WADAMESH restarts to apply it.	Zastosować nowy wygląd? WADAMESH uruchomi się ponownie.
+With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Z plikiem cities.bin w /var/lib/wadamesh-zero ekran główny pokazuje miasto, w którym jesteś, zamiast nazwy węzła.

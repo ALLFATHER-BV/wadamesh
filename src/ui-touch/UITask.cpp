@@ -20853,7 +20853,7 @@ static void buildBatteryPage() {
     setNote(c, "The percentage comes from the battery's fuel gauge, which learns the pack by itself.");
   }
   {
-#if !defined(WADA_ZERO)   // Cardputer Zero: its charger is not ours to drive; the gauge reading is
+#if !defined(WADA_ZERO)   // Cardputer Zero: its charger is not ours to drive; the gauge card above is all
     buildCareCard();
     buildCapacityCard();
     buildChargeCard();
@@ -72125,11 +72125,7 @@ static void themePreviewBuild(lv_obj_t* parent, lv_coord_t x, lv_coord_t y, lv_c
   lv_obj_set_style_border_width(s_tp.apply, 0, LV_PART_MAIN);
   lv_obj_add_event_cb(s_tp.apply, themeApplyCb, LV_EVENT_CLICKED, nullptr);
   s_tp.apply_lbl = lv_label_create(s_tp.apply);
-#if defined(WADA_ZERO)
-  lv_label_set_text(s_tp.apply_lbl, TR("Apply and respawn"));
-#else
   lv_label_set_text(s_tp.apply_lbl, TR("Apply and restart"));
-#endif
   lv_obj_set_style_text_font(s_tp.apply_lbl, &g_font_semi_14, LV_PART_MAIN);
   lv_obj_center(s_tp.apply_lbl);
   lv_obj_add_flag(s_tp.apply, LV_OBJ_FLAG_HIDDEN);
@@ -72522,7 +72518,7 @@ static bool themeBackOffersApply() {
   if (!on_page) return false;
   s_theme_back_asked = true;
 #if defined(WADA_ZERO)
-  showConfirm(TR("New skin loaded into the buffer.\nCardputer Zero respawns to run it."), TR("Respawn"),
+  showConfirm(TR("Apply the new look? WADAMESH restarts to apply it."), TR("Apply and restart"),
 #else
   showConfirm(TR("Apply the new look? The Pager restarts to apply it."), TR("Apply and restart"),
 #endif
@@ -72598,11 +72594,7 @@ static void themeMiniBuild(lv_obj_t* root, lv_obj_t* page) {
   lv_obj_set_style_border_width(b, 0, LV_PART_MAIN);
   lv_obj_add_event_cb(b, themeApplyCb, LV_EVENT_CLICKED, nullptr);
   s_tp.mini_lbl = lv_label_create(b);
-#if defined(WADA_ZERO)
-  lv_label_set_text(s_tp.mini_lbl, TR("Apply and respawn"));
-#else
   lv_label_set_text(s_tp.mini_lbl, TR("Apply and restart"));
-#endif
   lv_obj_set_style_text_font(s_tp.mini_lbl, &g_font_semi_14, LV_PART_MAIN);
   lv_label_set_long_mode(s_tp.mini_lbl, LV_LABEL_LONG_DOT);
   lv_obj_set_style_max_width(s_tp.mini_lbl, sw - SC(110), LV_PART_MAIN);

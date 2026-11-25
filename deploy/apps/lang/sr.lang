@@ -2477,3 +2477,6 @@ Waiting for an answer on the device.	Чека се одговор на уређ�
 This app has no settings	Ова апликација нема подешавања
 Saved on the device for this app. The app reads them when it opens.	Сачувано на уређају за ову апликацију. Апликација их чита при отварању.
 Could not save to the device storage	Чување у меморију уређаја није успело
+Phosphor	Фосфор
+Apply the new look? WADAMESH restarts to apply it.	Применити нови изглед? WADAMESH се рестартује.
+With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Са cities.bin у /var/lib/wadamesh-zero почетни екран приказује град у којем сте уместо имена чвора.

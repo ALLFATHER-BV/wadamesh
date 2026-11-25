@@ -2492,3 +2492,6 @@ Waiting for an answer on the device.	Čekám na odpověď na zařízení.
 This app has no settings	Tato aplikace nemá nastavení
 Saved on the device for this app. The app reads them when it opens.	Uloženo v zařízení pro tuto aplikaci. Aplikace je načte při otevření.
 Could not save to the device storage	Nelze uložit do úložiště zařízení
+Phosphor	Fosfor
+Apply the new look? WADAMESH restarts to apply it.	Použít nový vzhled? WADAMESH se restartuje.
+With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	S cities.bin v /var/lib/wadamesh-zero ukazuje domovská obrazovka město, ve kterém jste, místo názvu uzlu.

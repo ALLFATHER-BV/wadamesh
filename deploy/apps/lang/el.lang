@@ -2477,3 +2477,6 @@ Waiting for an answer on the device.	Αναμονή απάντησης στη σ
 This app has no settings	Αυτή η εφαρμογή δεν έχει ρυθμίσεις
 Saved on the device for this app. The app reads them when it opens.	Αποθηκεύτηκαν στη συσκευή για αυτή την εφαρμογή. Η εφαρμογή τις διαβάζει όταν ανοίγει.
 Could not save to the device storage	Δεν ήταν δυνατή η αποθήκευση στη μνήμη της συσκευής
+Phosphor	Φώσφορος
+Apply the new look? WADAMESH restarts to apply it.	Εφαρμογή της νέας εμφάνισης; Το WADAMESH θα επανεκκινήσει.
+With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Με το cities.bin στο /var/lib/wadamesh-zero, η Αρχική δείχνει την πόλη όπου βρίσκεστε αντί για το όνομα του κόμβου.

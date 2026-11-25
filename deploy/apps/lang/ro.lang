@@ -2478,3 +2478,6 @@ Waiting for an answer on the device.	Se așteaptă un răspuns pe dispozitiv.
 This app has no settings	Această aplicație nu are setări
 Saved on the device for this app. The app reads them when it opens.	Salvate pe dispozitiv pentru această aplicație. Aplicația le citește la deschidere.
 Could not save to the device storage	Nu s-a putut salva în memoria dispozitivului
+Phosphor	Fosfor
+Apply the new look? WADAMESH restarts to apply it.	Aplici noul aspect? WADAMESH repornește.
+With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Cu cities.bin în /var/lib/wadamesh-zero, ecranul principal arată orașul în care te afli în locul numelui nodului.

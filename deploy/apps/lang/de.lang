@@ -2477,3 +2477,6 @@ Waiting for an answer on the device.	Warte auf eine Antwort am Gerät.
 This app has no settings	Diese App hat keine Einstellungen
 Saved on the device for this app. The app reads them when it opens.	Für diese App auf dem Gerät gespeichert. Die App liest sie beim Öffnen.
 Could not save to the device storage	Konnte nicht im Gerätespeicher sichern
+Phosphor	Phosphor
+Apply the new look? WADAMESH restarts to apply it.	Neues Aussehen anwenden? WADAMESH startet neu.
+With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Mit cities.bin in /var/lib/wadamesh-zero zeigt Home die Stadt, in der du bist, statt des Knotennamens.
