@@ -4,6 +4,16 @@
 # ver: 34
 # name: Українська
 # base: uk
+Connect to Wi-Fi to download the emoji pack.	Під’єднайтеся до Wi-Fi, щоб завантажити пакет емодзі.
+Download emoji pack	Завантажити пакет емодзі
+Download the emoji pack over Wi-Fi. A microSD card is required.	Завантажте пакет емодзі через Wi-Fi. Потрібна карта microSD.
+Downloading emoji pack…	Завантаження пакета емодзі…
+Emoji pack	Пакет емодзі
+Emoji pack installed. Downloading another will replace it.	Пакет емодзі встановлено. Завантаження іншого замінить його.
+Replace the installed emoji pack? A custom pack may be overwritten.	Замінити встановлений пакет емодзі? Власний пакет може бути перезаписано.
+Replace	Замінити
+Emoji pack download failed	Не вдалося завантажити пакет емодзі
+Emoji pack downloaded. It applies after a restart.	Пакет емодзі завантажено. Діє після перезапуску.
  (device behind)	 (пристрій відстає)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d точок покриття · %lu записано на SD#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: очікування GPS…#
@@ -2488,3 +2498,8 @@ Type a 6-digit code	Введіть 6-значний код
 New random code each session	Новий випадковий код у кожній сесії
 Too easy to guess. Pick another code.	Надто легко вгадати. Виберіть інший код.
 Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Вимк.: новий випадковий код у кожній сесії. Увімк.: завжди той самий код. Код передається вашим Wi-Fi без шифрування, тож будь-хто, хто його там побачить або вгадає, зможе підключитися. Хибні спроби блокують щоразу довше, до години.
+Spell suggestions	Підказки правопису
+Spell suggestions: on	Підказки правопису: увімк
+Spell suggestions: off	Підказки правопису: вимк
+English only. Tap a correction above the message box.	Лише англійська. Торкніться виправлення над полем повідомлення.
+English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Лише англійська. Натисніть Вгору, щоб перейти до виправлень, Ліворуч або Праворуч, щоб вибрати, потім Enter.

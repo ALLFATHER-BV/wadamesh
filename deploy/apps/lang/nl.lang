@@ -4,6 +4,16 @@
 # ver: 34
 # name: Nederlands
 # base: nl
+Connect to Wi-Fi to download the emoji pack.	Maak verbinding met wifi om het emoji-pakket te downloaden.
+Download emoji pack	Emoji-pakket downloaden
+Download the emoji pack over Wi-Fi. A microSD card is required.	Download het emoji-pakket via wifi. Een microSD-kaart is vereist.
+Downloading emoji pack…	Emoji-pakket downloaden…
+Emoji pack	Emoji-pakket
+Emoji pack installed. Downloading another will replace it.	Er is een emoji-pakket geïnstalleerd. Een nieuwe download vervangt het.
+Replace the installed emoji pack? A custom pack may be overwritten.	Het geïnstalleerde emoji-pakket vervangen? Een aangepast pakket kan worden overschreven.
+Replace	Vervangen
+Emoji pack download failed	Downloaden van emoji-pakket mislukt
+Emoji pack downloaded. It applies after a restart.	Emoji-pakket gedownload. Actief na herstart.
  (device behind)	(apparaat loopt achter)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d dekkingspunten · %lu opgeslagen op SD#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: wachten op GPS-fix…#
@@ -2486,3 +2496,8 @@ Type a 6-digit code	Typ een 6-cijferige code
 New random code each session	Elke sessie een nieuwe willekeurige code
 Too easy to guess. Pick another code.	Te makkelijk te raden. Kies een andere code.
 Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Uit: elke sessie een nieuwe willekeurige code. Aan: altijd dezelfde code. De code gaat onversleuteld over je wifi, dus wie hem daar ziet of raadt, kan verbinden. Foute pogingen blokkeren telkens langer, tot een uur.
+Spell suggestions	Spellingsuggesties
+Spell suggestions: on	Spellingsuggesties: aan
+Spell suggestions: off	Spellingsuggesties: uit
+English only. Tap a correction above the message box.	Alleen Engels. Tik op een correctie boven het berichtvak.
+English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Alleen Engels. Druk op Omhoog voor de correcties, Links of Rechts om er een te kiezen, dan Enter.

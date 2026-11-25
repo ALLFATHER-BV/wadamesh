@@ -4,6 +4,16 @@
 # ver: 34
 # name: Ελληνικά
 # base: el
+Connect to Wi-Fi to download the emoji pack.	Συνδεθείτε σε Wi-Fi για λήψη του πακέτου emoji.
+Download emoji pack	Λήψη πακέτου emoji
+Download the emoji pack over Wi-Fi. A microSD card is required.	Κατεβάστε το πακέτο emoji μέσω Wi-Fi. Απαιτείται κάρτα microSD.
+Downloading emoji pack…	Λήψη πακέτου emoji…
+Emoji pack	Πακέτο emoji
+Emoji pack installed. Downloading another will replace it.	Υπάρχει εγκατεστημένο πακέτο emoji. Η λήψη άλλου θα το αντικαταστήσει.
+Replace the installed emoji pack? A custom pack may be overwritten.	Αντικατάσταση του πακέτου emoji; Ένα προσαρμοσμένο πακέτο μπορεί να αντικατασταθεί.
+Replace	Αντικατάσταση
+Emoji pack download failed	Αποτυχία λήψης πακέτου emoji
+Emoji pack downloaded. It applies after a restart.	Το πακέτο emoji λήφθηκε. Ισχύει μετά την επανεκκίνηση.
  (device behind)	 (συσκευή πίσω)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d σημεία κάλυψης · %lu στην SD#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: αναμονή στίγματος GPS…#
@@ -2488,3 +2498,8 @@ Type a 6-digit code	Πληκτρολογήστε 6ψήφιο κωδικό
 New random code each session	Νέος τυχαίος κωδικός σε κάθε συνεδρία
 Too easy to guess. Pick another code.	Πολύ εύκολο να μαντευτεί. Διαλέξτε άλλον κωδικό.
 Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Ανενεργό: νέος τυχαίος κωδικός σε κάθε συνεδρία. Ενεργό: πάντα ο ίδιος κωδικός. Ο κωδικός περνά από το Wi-Fi σας χωρίς κρυπτογράφηση, οπότε όποιος τον δει ή τον μαντέψει εκεί μπορεί να συνδεθεί. Οι λάθος προσπάθειες κλειδώνουν κάθε φορά για περισσότερο, έως μία ώρα.
+Spell suggestions	Προτάσεις ορθογραφίας
+Spell suggestions: on	Προτάσεις ορθογραφίας: ναι
+Spell suggestions: off	Προτάσεις ορθογραφίας: όχι
+English only. Tap a correction above the message box.	Μόνο αγγλικά. Πατήστε μια διόρθωση πάνω από το πεδίο μηνύματος.
+English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Μόνο αγγλικά. Πατήστε Πάνω για τις διορθώσεις, Αριστερά ή Δεξιά για επιλογή και μετά Enter.

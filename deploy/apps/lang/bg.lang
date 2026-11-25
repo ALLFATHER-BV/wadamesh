@@ -4,6 +4,16 @@
 # ver: 34
 # name: Български
 # base: bg
+Connect to Wi-Fi to download the emoji pack.	Свържете се с Wi-Fi, за да изтеглите пакета с емоджита.
+Download emoji pack	Изтегляне на пакет с емоджита
+Download the emoji pack over Wi-Fi. A microSD card is required.	Изтеглете пакета с емоджита през Wi-Fi. Необходима е microSD карта.
+Downloading emoji pack…	Изтегляне на пакета с емоджита…
+Emoji pack	Пакет с емоджита
+Emoji pack installed. Downloading another will replace it.	Има инсталиран пакет с емоджита. Изтеглянето на друг ще го замени.
+Replace the installed emoji pack? A custom pack may be overwritten.	Да се замени ли инсталираният пакет? Персонализиран пакет може да бъде презаписан.
+Replace	Замени
+Emoji pack download failed	Изтеглянето на пакета с емоджита е неуспешно
+Emoji pack downloaded. It applies after a restart.	Пакетът с емоджита е изтеглен. Прилага се след рестарт.
  (device behind)	 (устройството изостава)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d точки покритие · %lu записани на SD#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: изчакване на GPS…#
@@ -2488,3 +2498,8 @@ Type a 6-digit code	Въведете 6-цифрен код
 New random code each session	Нов случаен код за всяка сесия
 Too easy to guess. Pick another code.	Твърде лесен за отгатване. Изберете друг код.
 Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Изкл.: нов случаен код за всяка сесия. Вкл.: винаги един и същ код. Кодът минава през вашия Wi-Fi некриптиран, така че всеки, който го види или отгатне там, може да се свърже. Грешните опити заключват всеки път за по-дълго, до един час.
+Spell suggestions	Предложения за правопис
+Spell suggestions: on	Предложения за правопис: вкл
+Spell suggestions: off	Предложения за правопис: изкл
+English only. Tap a correction above the message box.	Само на английски. Докоснете корекция над полето за съобщение.
+English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Само на английски. Натиснете Нагоре, за да стигнете до корекциите, Наляво или Надясно, за да изберете, после Enter.

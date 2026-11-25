@@ -4,6 +4,16 @@
 # ver: 34
 # name: Italiano
 # base: it
+Connect to Wi-Fi to download the emoji pack.	Connettiti al Wi-Fi per scaricare il pacchetto emoji.
+Download emoji pack	Scarica pacchetto emoji
+Download the emoji pack over Wi-Fi. A microSD card is required.	Scarica il pacchetto emoji tramite Wi-Fi. È necessaria una scheda microSD.
+Downloading emoji pack…	Download del pacchetto emoji…
+Emoji pack	Pacchetto emoji
+Emoji pack installed. Downloading another will replace it.	Un pacchetto emoji è installato. Scaricarne un altro lo sostituirà.
+Replace the installed emoji pack? A custom pack may be overwritten.	Sostituire il pacchetto emoji installato? Un pacchetto personalizzato potrebbe essere sovrascritto.
+Replace	Sostituisci
+Emoji pack download failed	Download del pacchetto emoji non riuscito
+Emoji pack downloaded. It applies after a restart.	Pacchetto emoji scaricato. Attivo dopo il riavvio.
  (device behind)	 (dispositivo indietro)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d punti di copertura · %lu salvati su SD#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: attesa del fix GPS…#
@@ -2487,3 +2497,8 @@ Type a 6-digit code	Digita un codice di 6 cifre
 New random code each session	Un nuovo codice casuale a ogni sessione
 Too easy to guess. Pick another code.	Troppo facile da indovinare. Scegli un altro codice.
 Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Spento: un nuovo codice casuale a ogni sessione. Acceso: sempre lo stesso codice. Il codice passa in chiaro sul tuo Wi-Fi, quindi chi lo vede o lo indovina può collegarsi. I tentativi errati bloccano ogni volta più a lungo, fino a un'ora.
+Spell suggestions	Suggerimenti ortografici
+Spell suggestions: on	Suggerimenti ortografici: attivi
+Spell suggestions: off	Suggerimenti ortografici: disattivi
+English only. Tap a correction above the message box.	Solo inglese. Tocca una correzione sopra il campo del messaggio.
+English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Solo inglese. Premi Su per raggiungere le correzioni, Sinistra o Destra per sceglierne una, poi Invio.

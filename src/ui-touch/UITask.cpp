@@ -11,6 +11,11 @@
 #include "../RegionDiscovery.h"
 
 #include "device_caps.h"   // CAP_* capability flags (replaces device-name #ifs)
+#if CAP_SPELLCHECK
+#include "spell.h"         // English spell suggestions over the chat composer
+#endif
+// The boards with no touch reach the spell row with their navigation keys.
+#define SPELL_KEY_NAV (CAP_SPELLCHECK && !CAP_TOUCH)
 
 // Port the browser-facing web UI (VNC mirror / remote / terminal viewer page) listens on.
 // A T-Display P4 on the legacy ESP-AT C6 stack gets ONE listening port, so there the web UI
@@ -162,6 +167,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "ChannelSenderSplit.h"  // host-tested "SenderName: body" split for channel/room posts
 #include "TakTexts.h"            // host-tested MeshCore Open TAK / MediaMesh text rules
 #include "ReactionCodec.h"       // host-tested emoji reactions from MeshCore Open / One (#791)
+#include "ReplyQuote.h"          // host-tested reply-quote rules (#641)
 #include "PasteHexKey.h"        // host-tested key extraction for pasted key fields (#526)
 #include "NavSpatial.h"         // host-tested keypad spatial step (navMoveDir)
 #include "SdThreat.h"           // SD-card malware rules: the mount-time warning + wada.sd.remove
@@ -246,6 +252,7 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #include "AvatarText.h"     // initials and the name's emoji for avatars (pure, host-tested)
   #if CAP_EMOJI_PACK
     #include "EmojiPack.h"    // optional SD-card pack that extends the baked set
+    #include "EmojiPackDownload.h"
   #else
     enum : uint8_t {
       EMOJI_CAT_FACES = 0, EMOJI_CAT_GESTURES = 1, EMOJI_CAT_HEARTS = 2,
@@ -3893,8 +3900,8 @@ static bool terminalHandleVirtualKeyboardReady();
 // mirror sync / redirects below are skipped.
 #if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_EXT_KEYBOARD && !CAP_KEYBOARD)
 // Set while the on-screen keys were summoned for this editing session over an
-// external keyboard (the module's '#', or a second tap on a field a Bluetooth
-// keyboard types into); hideKb clears it.
+// external keyboard (the module's '#', or the keyboard cell in a field's
+// long-press edit menu); hideKb clears it.
 static bool s_osk_forced = false;
 #endif
 #if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
@@ -3926,7 +3933,7 @@ static inline bool kbMirrorActive() {
   return false;   // physical keyboard: bind keys straight to the field, never show the on-screen kb
 #elif defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_EXT_KEYBOARD && !CAP_KEYBOARD)
   // Detachable keyboards are detected at runtime. Keep the on-screen keys down
-  // while one is present unless a second tap summoned them for this field.
+  // while one is present unless the edit menu summoned them for this field (#715).
   return !(externalKeyboardTyping() && !s_osk_forced);
 #else
   return true;
@@ -7862,6 +7869,14 @@ static bool mentionNavActive();
 static void mentionNavMove(int delta);
 static void mentionNavConfirm();
 static void mentionBoxHide();
+#if SPELL_KEY_NAV
+static bool spellNavActive();
+static bool spellNavBegin();
+static void spellNavMove(int delta);
+static void spellNavConfirm();
+static void spellNavEnd();
+static void spellBoxHide();
+#endif
 // The UP/DOWN/LEFT/RIGHT action, factored out so a HELD arrow can auto-repeat it (navPump's
 // per-frame tick re-fires this). Recomputes the focused field each call so repeat stays correct.
 static void navArrowAction(uint32_t key) {
@@ -8068,6 +8083,38 @@ static void navPump() {
         if (c == 8 || c == 127)      { mentionBoxHide(); continue; }
       }
     }
+#if SPELL_KEY_NAV
+    // Spell row (outside the focus group too): Up from the field steps into
+    // it, Left/Right pick, Enter takes, Esc/F1/Backspace close it, and Down or
+    // typing steps back out, leaving it up.
+    if (ev.type == INPUT_EVENT_TYPE_NAVIGATION && ev.args_navigation.state) {
+      const int k = ev.args_navigation.key;
+      if (spellNavActive()) {
+        switch (k) {
+          case BSP_INPUT_NAVIGATION_KEY_LEFT:  spellNavMove(-1); continue;
+          case BSP_INPUT_NAVIGATION_KEY_RIGHT: spellNavMove(+1); continue;
+          case BSP_INPUT_NAVIGATION_KEY_UP:    continue;
+          case BSP_INPUT_NAVIGATION_KEY_DOWN:  spellNavEnd(); continue;
+          case BSP_INPUT_NAVIGATION_KEY_RETURN:
+          case BSP_INPUT_NAVIGATION_KEY_GAMEPAD_A:
+          case BSP_INPUT_NAVIGATION_KEY_JOYSTICK_PRESS:
+            spellNavConfirm(); continue;
+          case BSP_INPUT_NAVIGATION_KEY_F1:
+          case BSP_INPUT_NAVIGATION_KEY_ESC:
+          case BSP_INPUT_NAVIGATION_KEY_GAMEPAD_B:
+            spellBoxHide(); continue;
+          default: spellNavEnd(); break;
+        }
+      } else if (k == BSP_INPUT_NAVIGATION_KEY_UP && spellNavBegin()) {
+        continue;
+      }
+    } else if (ev.type == INPUT_EVENT_TYPE_KEYBOARD && spellNavActive()) {
+      const char c = ev.args_keyboard.ascii;
+      if (c == '\r' || c == '\n') { spellNavConfirm(); continue; }
+      if (c == 8 || c == 127)      { spellBoxHide(); continue; }
+      spellNavEnd();   // typing carries on into the field
+    }
+#endif
     // An open dropdown captures input: arrows move the highlight (LV_KEY_UP/DOWN, NOT prev/next),
     // Enter selects + closes, Esc/✕ closes. navMaybeRebuild() leaves the group alone while it's open.
     if (navOpenDropdown()) {
@@ -9304,10 +9351,23 @@ static void refreshLogModalView();
 static void hideKb();
 static void accentExit();      // long-press accent picker (issue #22, dead on touch)
 static void accentBoxHide();   // tap-to-pick accent box (issue #22)
+static void spellBoxHide();    // spell suggestion row over the chat composer
 static void mentionBoxHide();  // tap-to-pick @-mention contact picker (issue #42)
 static void txtMenuHide();     // cut/copy/paste/select-all edit menu
 static void showKb(LvChatPanel* p, bool reveal = true);
 static void closeSettingsModal();
+#if CAP_EMOJI_PACK_DOWNLOAD
+// Settings > Keyboard > Emoji pack (#831). The download runs on the tile worker,
+// like "Save update bin to SD"; these mirror that flow.
+static volatile bool s_emojidl_request = false;   // UI -> worker
+static volatile int  s_emojidl_state   = 0;       // 0 idle, 1 running, 2 installed, 3 failed
+static bool          s_emojidl_had_pack = false;  // a pack was there when the page opened
+static lv_obj_t*     s_emojidl_btn     = nullptr;
+static lv_obj_t*     s_emojidl_note    = nullptr;
+static lv_timer_t*   s_emojidl_timer   = nullptr;
+static inline bool emojiPackDownloadBusy() { return s_emojidl_request || s_emojidl_state == 1; }
+static unsigned emojiPackFileLocations();
+#endif
 static void contactSelectCb(lv_event_t* e);
 static double contactDistanceKm(double lat1, double lon1, double lat2, double lon2);
 static void openLogModalCb(lv_event_t* e);
@@ -11092,6 +11152,7 @@ static void kbMirrorBind(lv_obj_t* real_ta) {
 static void hideKb() {
   accentExit();   // tear down any open accent picker
   accentBoxHide();
+  spellBoxHide();
   mentionBoxHide();   // tear down any open @-mention picker
   txtMenuHide();   // tear down any open edit menu
   kbMirrorSyncToReal();
@@ -11191,30 +11252,25 @@ static void showKb(LvChatPanel* p, bool reveal) {
 }
 
 #if CAP_EXT_KEYBOARD && !CAP_KEYBOARD
-// Second tap on a field an external keyboard types into: bring the on-screen keys
-// up for it anyway, in case the keyboard is out of reach. A field's PRESSED
-// arrives before LVGL moves the focus, so "already bound" there means the field
-// was the typing target before this tap, not because of it.
-static lv_obj_t* s_osk_press_ta = nullptr;   // compared only, never dereferenced
-static void externalKbdNoteFieldPress(lv_obj_t* ta) {
-#if defined(HAS_ATTAKY_MESH_KEYBOARD)
-  // The keyboard module summons the keys with its '#'. A tap must not: a settings
-  // field is often bound already when the page opens (Profile's node name), so the
-  // first tap counted as a "second" one and brought the keys up over the module.
-  if (attakyKeyboardPresent()) { s_osk_press_ta = nullptr; return; }
-#endif
-  const bool bound = g_lv.keyboard && lv_keyboard_get_textarea(g_lv.keyboard) == ta;
-  s_osk_press_ta = (bound && externalKeyboardTyping() && !s_osk_forced) ? ta : nullptr;
-}
-// On CLICKED: for such a second tap, summon the keys for this editing session.
-static void externalKbdSecondTap(lv_obj_t* ta) {
+// The on-screen keys for a field an external keyboard types into, in case that
+// keyboard is out of reach: the keyboard cell in the field's long-press edit menu
+// (#715). Taps never do it. This used to be a second tap on a field that was
+// already bound, but opening a chat binds its composer, so the FIRST tap on the
+// composer counted as the second and the keys came up under a connected keyboard.
+static inline bool externalKbdKeysOffered() {
 #if CAP_NATIVE_KEYBOARD
-  // The phone's own keyboard is this board's keys (the browser build on a phone): a second
-  // tap reopens it (the page does that), it does not summon the UI's keys on top.
-  if (boardNativeKeyboard()) { s_osk_press_ta = nullptr; return; }
+  // The phone's own keyboard is this board's keys (the browser build on a phone).
+  if (boardNativeKeyboard()) return false;
 #endif
-  if (ta && ta == s_osk_press_ta) s_osk_forced = true;
-  s_osk_press_ta = nullptr;
+  return externalKeyboardTyping() && !s_osk_forced &&
+         g_lv.keyboard && lv_obj_has_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN);
+}
+// Summon them for this editing session (hideKb ends it), the way the Attaky's '#' does.
+static void externalKbdSummonKeys(lv_obj_t* ta) {
+  if (!ta || !lv_obj_is_valid(ta)) return;
+  s_osk_forced = true;
+  if (s_kb_panel && s_kb_panel->composer_ta == ta) showKb(s_kb_panel);
+  else                                             kbMirrorBind(ta);
 }
 #endif
 
@@ -11662,6 +11718,309 @@ static void accentAltCb(lv_event_t* e) {
   }
 }
 
+// ---- Spell suggestions (English) -----------------------------------------
+// Ported from camillia-mt. Finish a word in a chat composer -- a space or
+// punctuation after it -- and if the word is not in the list (spell.h), a row
+// of what it might have been opens just above the field: the word as typed
+// first, dimmed, as the "leave it", then up to three suggestions, closest and
+// most common first. Tapping one swaps the word in place.
+//
+// The row stays up while the next word is typed, so it takes the slot right
+// above the field and the accent box, when a letter brings one up, stacks on
+// top of it (accentBoxMaybeShow). It closes when the next word is finished,
+// when the word it offers for is edited or the text changes under it (a send,
+// a paste, a delete), or on a pick. English UI only, because the list is.
+#if CAP_SPELLCHECK
+static bool      s_spell_check     = true;     // Settings > Keyboard switch (NVS, default on)
+static lv_obj_t* s_spellbox        = nullptr;
+static lv_obj_t* s_spellbox_ta     = nullptr;  // the field the row edits
+static char      s_spell_opts[spell::kMaxSuggest + 1][spell::kMaxWord + 1];
+static int       s_spell_n         = 0;        // options, the typed word included
+static uint32_t  s_spell_word      = 0;        // where the word starts, in bytes
+static uint32_t  s_spell_len       = 0;        // its length: ASCII, so bytes = characters
+static lv_obj_t* s_spell_prev_ta   = nullptr;  // the field last seen ...
+static uint32_t  s_spell_prev_len  = 0;        // ... and its byte length then
+static bool      s_spell_editing   = false;    // our own swap: ignore its VALUE_CHANGED
+static lv_coord_t s_spellbox_y     = 0;        // where spellBoxShow put the row ...
+static lv_coord_t s_spellbox_h     = 0;
+static bool      s_spellbox_below  = false;    // ... and whether that is under the field
+#if SPELL_KEY_NAV
+// No touch on these boards, and the cells are NAV_SKIP_FLAG. The row stays up
+// while the next word is typed, so unlike the accent box on the M9 it never
+// takes the arrows by itself: the user steps in on purpose -- Up on the M9 and
+// the Tanmatsu, Fn+Space on the Pager -- then Left/Right (or the encoder) walk
+// the cells, Enter takes one, Back/Backspace closes the row and Down (or any
+// typing) steps back out and leaves it up.
+static lv_obj_t* s_spell_cells[spell::kMaxSuggest + 1] = {};
+static bool      s_spellnav_active = false;
+static int       s_spellnav_idx    = 0;
+#endif
+
+static void spellBoxHide() {
+  // Async: a tap on one of the row's own cells closes it.
+  if (s_spellbox && lv_obj_is_valid(s_spellbox)) lv_obj_del_async(s_spellbox);
+  s_spellbox = nullptr;
+  s_spellbox_ta = nullptr;
+  s_spell_n = 0;
+#if SPELL_KEY_NAV
+  s_spellnav_active = false;
+  for (auto& c : s_spell_cells) c = nullptr;
+#endif
+}
+
+static bool spellBoxVisible() {
+  return s_spell_n > 0 && s_spellbox && lv_obj_is_valid(s_spellbox) && s_spellbox_ta &&
+         !lv_obj_has_flag(s_spellbox, LV_OBJ_FLAG_HIDDEN);
+}
+
+#if SPELL_KEY_NAV
+static bool spellNavActive() { return s_spellnav_active && spellBoxVisible(); }
+
+static void spellNavRestyle() {
+  for (int i = 0; i < s_spell_n; ++i)
+    if (s_spell_cells[i]) setSelectionGlow(s_spell_cells[i], s_spellnav_active && i == s_spellnav_idx, LV_PART_MAIN);
+}
+
+// Step into the row, on the first suggestion rather than the typed word. Only
+// from the field it offers for, and only while that field has the focus.
+static bool spellNavBegin() {
+  if (!spellBoxVisible() || navFocusedTextarea() != s_spellbox_ta) return false;
+  s_spellnav_active = true;
+  s_spellnav_idx = s_spell_n > 1 ? 1 : 0;
+  spellNavRestyle();
+  return true;
+}
+
+static void spellNavMove(int delta) {
+  if (!spellNavActive()) return;
+  s_spellnav_idx = ((s_spellnav_idx + delta) % s_spell_n + s_spell_n) % s_spell_n;
+  spellNavRestyle();
+}
+
+// Leave the row, keeping it up.
+static void spellNavEnd() {
+  if (!s_spellnav_active) return;
+  s_spellnav_active = false;
+  spellNavRestyle();
+}
+
+// Fire the highlighted cell's own CLICKED binding (spellCellCb), as a tap would.
+static void spellNavConfirm() {
+  if (spellNavActive() && s_spell_cells[s_spellnav_idx])
+    lv_event_send(s_spell_cells[s_spellnav_idx], LV_EVENT_CLICKED, nullptr);
+  else
+    spellBoxHide();
+}
+#endif
+
+// A field can go by a path that never closes the row (a form closing after its
+// send, a panel rebuild), and a pick would then edit freed memory. So when the
+// field goes, drop the pointer and hide the row. Only hide here, never delete:
+// when a whole layer is being cleaned the row may go in the same pass.
+static void spellTaDeleteCb(lv_event_t* e) {
+  lv_obj_t* t = lv_event_get_target(e);
+  if (t == s_spell_prev_ta) { s_spell_prev_ta = nullptr; s_spell_prev_len = 0; }
+  if (t != s_spellbox_ta) return;
+  s_spellbox_ta = nullptr;
+  if (s_spellbox && lv_obj_is_valid(s_spellbox)) lv_obj_add_flag(s_spellbox, LV_OBJ_FLAG_HIDDEN);
+}
+
+static bool spellIsWordChar(char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '\'';
+}
+
+// What ends a word and so gets it checked.
+static bool spellIsBoundary(char c) {
+  return c == ' ' || c == ',' || c == '.' || c == '!' || c == '?' || c == ';' ||
+         c == ':' || c == ')' || c == '"' || c == '\n';
+}
+
+// UTF-8 characters in the first `bytes` bytes of t, and the reverse.
+static uint32_t spellCharsIn(const char* t, uint32_t bytes) {
+  uint32_t n = 0;
+  for (uint32_t i = 0; i < bytes && t[i]; ++i)
+    if ((static_cast<unsigned char>(t[i]) & 0xC0u) != 0x80u) ++n;
+  return n;
+}
+static uint32_t spellByteAt(const char* t, uint32_t chars) {
+  uint32_t i = 0;
+  for (; t[i]; ++i) {
+    if ((static_cast<unsigned char>(t[i]) & 0xC0u) == 0x80u) continue;
+    if (chars == 0) break;
+    --chars;
+  }
+  return i;
+}
+
+// The word the row offers for is still where it was, as typed, and still ends
+// there. Anything else means the text moved under the row.
+static bool spellWordIntact(const char* t, uint32_t len) {
+  if (!t || len <= s_spell_word + s_spell_len) return false;
+  if (memcmp(t + s_spell_word, s_spell_opts[0], s_spell_len) != 0) return false;
+  return !spellIsWordChar(t[s_spell_word + s_spell_len]);
+}
+
+static void spellCellCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int idx = (int)(intptr_t)lv_event_get_user_data(e);
+  lv_obj_t* ta = s_spellbox_ta;
+  if (ta && !lv_obj_is_valid(ta)) ta = nullptr;
+  const char* t = ta ? lv_textarea_get_text(ta) : nullptr;
+  const uint32_t len = t ? (uint32_t)strlen(t) : 0;
+  // Cell 0 is the word as typed: tapping it just closes the row.
+  if (t && idx > 0 && idx < s_spell_n && spellWordIntact(t, len)) {
+    const char* rep = s_spell_opts[idx];
+    const uint32_t rl = (uint32_t)strlen(rep);
+    const uint32_t max_chars = lv_textarea_get_max_length(ta);
+    if (!max_chars || spellCharsIn(t, len) - s_spell_len + rl <= max_chars) {
+      char* next = (char*)malloc(len - s_spell_len + rl + 1);
+      if (next) {
+        memcpy(next, t, s_spell_word);
+        memcpy(next + s_spell_word, rep, rl);
+        strcpy(next + s_spell_word + rl, t + s_spell_word + s_spell_len);
+        // Keep the caret where it was relative to the text around it.
+        uint32_t caret = lv_textarea_get_cursor_pos(ta);
+        if (caret > spellCharsIn(t, s_spell_word)) caret = caret + rl - s_spell_len;
+        s_spell_editing = true;
+        lv_textarea_set_text(ta, next);
+        lv_textarea_set_cursor_pos(ta, (int32_t)caret);
+        if (ta == s_kb_mirror_ta) kbMirrorSyncToReal();
+        s_spell_editing = false;
+        free(next);
+        const char* now = lv_textarea_get_text(ta);
+        s_spell_prev_ta = ta;
+        s_spell_prev_len = now ? (uint32_t)strlen(now) : 0;
+      }
+    }
+  }
+  spellBoxHide();
+  accentBoxHide();   // set_text re-ran the composer hooks; a box for its last letter is noise
+}
+
+static void spellBoxShow(lv_obj_t* ta) {
+  const int ch = 34, gap = 4, pad = 5;
+  s_spellbox = lv_obj_create(lv_layer_top());
+  lv_obj_add_flag(s_spellbox, NAV_SKIP_FLAG);   // passive tap-only hint, like the accent box
+  lv_obj_remove_style_all(s_spellbox);
+  lv_obj_set_style_bg_color(s_spellbox, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_spellbox, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(s_spellbox, 8, LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_spellbox, lv_color_hex(COLOR_ACCENT_BORDER), LV_PART_MAIN);
+  lv_obj_set_style_border_width(s_spellbox, 1, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(s_spellbox, pad, LV_PART_MAIN);
+  lv_obj_set_style_pad_column(s_spellbox, gap, LV_PART_MAIN);
+  lv_obj_set_flex_flow(s_spellbox, LV_FLEX_FLOW_ROW);
+  lv_obj_set_size(s_spellbox, LV_SIZE_CONTENT, ch + pad * 2);
+  lv_obj_clear_flag(s_spellbox, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* cells[spell::kMaxSuggest + 1] = {};
+  for (int i = 0; i < s_spell_n; ++i) {
+    lv_obj_t* c = lv_btn_create(s_spellbox);
+    lv_obj_add_flag(c, NAV_SKIP_FLAG);
+    lv_obj_set_size(c, LV_SIZE_CONTENT, ch);
+    lv_obj_set_style_radius(c, 5, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(c, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(c, 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_ACCENT_SURFACE), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_add_event_cb(c, spellCellCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+    lv_obj_t* l = lv_label_create(c);
+    lv_label_set_text(l, s_spell_opts[i]);
+    lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+    // The typed word dimmer: it is the "no thanks", not a suggestion.
+    lv_obj_set_style_text_color(l, lv_color_hex(i == 0 ? COLOR_SUB : COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_center(l);
+    cells[i] = c;
+  }
+  // Long words on a narrow panel: drop suggestions from the end until the row
+  // fits, keeping the typed word and at least one suggestion.
+  const lv_coord_t hres = lv_disp_get_hor_res(nullptr);
+  lv_obj_update_layout(s_spellbox);
+  while (s_spell_n > 2 && lv_obj_get_width(s_spellbox) > hres - 8) {
+    --s_spell_n;
+    lv_obj_del(cells[s_spell_n]);
+    lv_obj_update_layout(s_spellbox);
+  }
+  // Just above the field (below if there's no room above), clamped clear of
+  // the keyboard and, in a chat, the composer -- the accent box's rules.
+  lv_area_t a; lv_obj_get_coords(ta, &a);
+  const lv_coord_t bw = lv_obj_get_width(s_spellbox), bh = lv_obj_get_height(s_spellbox);
+  lv_coord_t by = a.y1 - bh - 4;
+  if (by < STATUSBAR_H + 2) by = a.y2 + 4;
+  if (g_lv.keyboard && !lv_obj_has_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN)) {
+    lv_coord_t limit = lv_disp_get_ver_res(nullptr) - chatKbH() - 6;
+    if (s_kb_panel) limit -= s_comp_h;
+    if (by + bh > limit) by = limit - bh;
+    if (by < STATUSBAR_H + 2) by = STATUSBAR_H + 2;
+  }
+  lv_obj_set_pos(s_spellbox, (hres - bw) / 2, by);
+  lv_obj_move_foreground(s_spellbox);
+#if SPELL_KEY_NAV
+  for (int i = 0; i < s_spell_n; ++i) s_spell_cells[i] = cells[i];
+  s_spellnav_active = false;
+#endif
+  s_spellbox_ta = ta;
+  s_spellbox_y = by;
+  s_spellbox_h = bh;
+  s_spellbox_below = by >= a.y2;
+}
+
+// Every VALUE_CHANGED of a chat composer (composerMentionRefresh). With the
+// on-screen keyboard's mirror bound, `ta` is the mirror: that is where the
+// caret is.
+static void spellComposerChanged(lv_obj_t* ta) {
+  if (s_spell_editing || !ta) return;
+  const char* t = lv_textarea_get_text(ta);
+  const uint32_t len = t ? (uint32_t)strlen(t) : 0;
+  const uint32_t prev = (ta == s_spell_prev_ta) ? s_spell_prev_len : len;
+  if (ta != s_spell_prev_ta) {
+    lv_obj_remove_event_cb(ta, spellTaDeleteCb);   // at most one hook per field
+    lv_obj_add_event_cb(ta, spellTaDeleteCb, LV_EVENT_DELETE, nullptr);
+  }
+  s_spell_prev_ta = ta;
+  s_spell_prev_len = len;
+  if (!s_spell_check || i18nGetLang() != LANG_EN) { spellBoxHide(); return; }
+
+  // One byte more than last time: a key typed. A paste, an emoji, a delete or
+  // the field clearing after a send never opens a row, and keeps one only
+  // while its word is untouched.
+  const uint32_t cur = (len == prev + 1) ? spellByteAt(t, lv_textarea_get_cursor_pos(ta)) : 0;
+  if (cur < 3 || !spellIsBoundary(t[cur - 1])) {
+    if (spellBoxVisible() && (ta != s_spellbox_ta || !spellWordIntact(t, len))) spellBoxHide();
+    return;
+  }
+
+  // A word was just finished: the row for the one before it is done with.
+  spellBoxHide();
+  const uint32_t end = cur - 1;
+  uint32_t start = end;
+  while (start > 0 && spellIsWordChar(t[start - 1])) --start;
+  // Only a word that stands on its own: not the tail of a URL, a number, an
+  // @mention or a #channel.
+  if (start > 0 && t[start - 1] != ' ' && t[start - 1] != '(' && t[start - 1] != '"' &&
+      t[start - 1] != '\n')
+    return;
+  const size_t n = end - start;
+  if (!spell::shouldCheck(t + start, n)) return;
+
+  const spell::Dict& d = spell::english();
+  if (spell::known(d, t + start, n)) return;
+  char opts[spell::kMaxSuggest][spell::kMaxWord + 1];
+  const int found = spell::suggest(d, t + start, n, opts, spell::kMaxSuggest);
+  if (found == 0) return;
+
+  memcpy(s_spell_opts[0], t + start, n);
+  s_spell_opts[0][n] = '\0';
+  for (int i = 0; i < found; ++i) memcpy(s_spell_opts[i + 1], opts[i], sizeof(opts[i]));
+  s_spell_n = found + 1;
+  s_spell_word = start;
+  s_spell_len = (uint32_t)n;
+  spellBoxShow(ta);
+}
+#else
+static void spellBoxHide() {}
+static void spellComposerChanged(lv_obj_t*) {}
+#endif  // CAP_SPELLCHECK
+
 // ---- Accent box: tap-to-pick accents (issue #22) -------------------------
 // When a letter with accent variants is typed (on-screen OR physical keyboard),
 // a floating box of its variants pops up; tapping one replaces the just-typed
@@ -11805,6 +12164,19 @@ static void accentBoxMaybeShow() {
     if (by + bh > limit) by = limit - bh;
     if (by < STATUSBAR_H + 2) by = STATUSBAR_H + 2;
   }
+#if CAP_SPELLCHECK
+  // A spell row already holds the slot next to the field: stack beyond it, so
+  // going out from the field it is text, suggestions, accents -- upward
+  // normally, downward when the field is too near the top for the row.
+  if (spellBoxVisible()) {
+    if (s_spellbox_below) {
+      by = s_spellbox_y + s_spellbox_h + 4;
+    } else {
+      by = s_spellbox_y - bh - 4;
+      if (by < STATUSBAR_H + 2) by = STATUSBAR_H + 2;
+    }
+  }
+#endif
   lv_obj_set_pos(s_accbox, bx, by);
   lv_obj_move_foreground(s_accbox);
 }
@@ -12051,8 +12423,9 @@ static bool mentionBoxMaybeShow(lv_obj_t* ta) {
   return true;
 }
 static void composerMentionRefresh(lv_obj_t* ta) {
-  if (mentionBoxMaybeShow(ta)) { accentBoxHide(); return; }
+  if (mentionBoxMaybeShow(ta)) { accentBoxHide(); spellBoxHide(); return; }
   mentionBoxHide();
+  spellComposerChanged(ta);   // before the accent box, which stacks on the row
   // Fall through to the accent box, as this function's predecessor did. Losing
   // this is what killed accent popups for anyone typing on a PHYSICAL keyboard
   // (#338): those keystrokes reach the composer's own VALUE_CHANGED, which ends
@@ -12138,9 +12511,6 @@ static void composerFocusCb(lv_event_t* e) {
     if (act && (lv_indev_get_scroll_obj(act) || lv_indev_get_scroll_dir(act) != LV_DIR_NONE)) return;
   }
   auto* p = static_cast<LvChatPanel*>(lv_event_get_user_data(e));
-#if CAP_EXT_KEYBOARD && !CAP_KEYBOARD
-  if (code == LV_EVENT_CLICKED) externalKbdSecondTap(lv_event_get_target(e));
-#endif
 #if CAP_TOUCH && !CAP_KEYBOARD
   // Opening a chat focuses its composer (nav-group rebuild): bind it, but leave
   // the keys down so the conversation is readable. A tap (CLICKED) brings them up.
@@ -14838,9 +15208,6 @@ static void settingsFieldFocusCb(lv_event_t* e) {
   }
   lv_obj_t* ta = lv_event_get_target(e);
   if (!ta) return;
-#if CAP_EXT_KEYBOARD && !CAP_KEYBOARD
-  if (code == LV_EVENT_CLICKED) externalKbdSecondTap(ta);
-#endif
   s_kb_panel = nullptr;
   kbMirrorBind(ta);
   noteKbActivity();   // focusing/tapping a field lights the auto backlight
@@ -14950,9 +15317,6 @@ static void copyLabelLongPressCb(lv_event_t* e) {
 static void kbActivityPressCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_PRESSED) return;
   noteKbActivity();
-#if CAP_EXT_KEYBOARD && !CAP_KEYBOARD
-  externalKbdNoteFieldPress(lv_event_get_target(e));
-#endif
 }
 
 // When a field loses focus (tapping away / another field), dismiss the long-press accent
@@ -15128,7 +15492,7 @@ static void txtMenuHide() {
   s_txtmenu_ta = nullptr;
 }
 
-enum { TXT_CUT = 0, TXT_COPY, TXT_PASTE, TXT_SELALL, TXT_SYM, TXT_EMOJI };
+enum { TXT_CUT = 0, TXT_COPY, TXT_PASTE, TXT_SELALL, TXT_SYM, TXT_EMOJI, TXT_KEYS };
 
 // A key field takes the key out of whatever was pasted (#526): a copied message
 // carries text around it, and the field's length cap would otherwise keep that
@@ -15160,6 +15524,9 @@ static void txtMenuCellCb(lv_event_t* e) {
   intptr_t act = reinterpret_cast<intptr_t>(lv_event_get_user_data(e));
   lv_obj_t* ta = s_txtmenu_ta;
   if (!ta) { txtMenuHide(); return; }
+#if CAP_EXT_KEYBOARD && !CAP_KEYBOARD
+  if (act == TXT_KEYS) { txtMenuHide(); externalKbdSummonKeys(ta); return; }   // the real field, not a mirror
+#endif
   // Mirror-bound field (settings fields while the on-screen keyboard is up):
   // edit the mirror the user is looking at — live-sync propagates to the real
   // field. Editing the real ta directly here would be clobbered by the mirror
@@ -15205,16 +15572,30 @@ static void txtMenuShow(lv_obj_t* ta) {
   txtMenuHide();
   if (!ta) return;
   s_txtmenu_ta = ta;
-  static const char* const kLabels[] = { "Cut", "Copy", "Paste", "All", "Sym", "Emoji" };
-  const int n = 6, ch = 34, gap = 4, pad = 6;
-  // Fit the row to the panel rather than to a number that happened to work on a
+  static const char* const kLabels[] = { "Cut", "Copy", "Paste", "All", "Sym", "Emoji", LV_SYMBOL_KEYBOARD };
+  // While an external keyboard types, a keyboard cell leads the row: the only way
+  // to bring the on-screen keys up under it (#715).
+  int acts[7];
+  int n = 0;
+#if CAP_EXT_KEYBOARD && !CAP_KEYBOARD
+  if (externalKbdKeysOffered()) acts[n++] = TXT_KEYS;
+#endif
+  for (int a = TXT_CUT; a <= TXT_EMOJI; ++a) acts[n++] = a;
+  const int ch = 34, gap = 4, pad = 6;
+  // Fit the cells to the panel rather than to a number that happened to work on a
   // 320 px screen: at the old fixed 48 px this was already 268 px wide, so the
-  // sixth cell would have hung off a 240 px board entirely.
+  // sixth cell would have hung off a 240 px board entirely. A cell narrower than
+  // its widest label ("Emoji" is 41 px in the 14 px font) clips the word, so when
+  // one row cannot hold them all at that width the menu takes two balanced rows.
   const lv_coord_t avail = lv_disp_get_hor_res(nullptr) - 8;
+  const int kMinCw = 42;
+  int cols = n;
+  while (cols > 1 && (avail - (cols - 1) * gap - pad * 2) / cols < kMinCw) --cols;
+  const int rows = (n + cols - 1) / cols;
+  cols = (n + rows - 1) / rows;
   int cw = 48;
-  if (n * cw + (n - 1) * gap + pad * 2 > avail)
-    cw = (int)((avail - (n - 1) * gap - pad * 2) / n);
-  if (cw < 30) cw = 30;
+  if (cols * cw + (cols - 1) * gap + pad * 2 > avail)
+    cw = (int)((avail - (cols - 1) * gap - pad * 2) / cols);
   s_txtmenu = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_txtmenu);
   lv_obj_set_style_bg_color(s_txtmenu, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
@@ -15224,8 +15605,10 @@ static void txtMenuShow(lv_obj_t* ta) {
   lv_obj_set_style_border_width(s_txtmenu, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(s_txtmenu, pad, LV_PART_MAIN);
   lv_obj_set_style_pad_column(s_txtmenu, gap, LV_PART_MAIN);
-  lv_obj_set_flex_flow(s_txtmenu, LV_FLEX_FLOW_ROW);
-  lv_obj_set_size(s_txtmenu, n * cw + (n - 1) * gap + pad * 2, ch + pad * 2);
+  lv_obj_set_style_pad_row(s_txtmenu, gap, LV_PART_MAIN);
+  lv_obj_set_flex_flow(s_txtmenu, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_set_size(s_txtmenu, cols * cw + (cols - 1) * gap + pad * 2,
+                  rows * ch + (rows - 1) * gap + pad * 2);
   lv_obj_clear_flag(s_txtmenu, LV_OBJ_FLAG_SCROLLABLE);
   for (int i = 0; i < n; ++i) {
     lv_obj_t* c = lv_btn_create(s_txtmenu);
@@ -15233,9 +15616,9 @@ static void txtMenuShow(lv_obj_t* ta) {
     lv_obj_set_style_radius(c, 5, LV_PART_MAIN);
     lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_ACCENT_SURFACE), LV_PART_MAIN);
     lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_add_event_cb(c, txtMenuCellCb, LV_EVENT_CLICKED, reinterpret_cast<void*>((intptr_t)i));
+    lv_obj_add_event_cb(c, txtMenuCellCb, LV_EVENT_CLICKED, reinterpret_cast<void*>((intptr_t)acts[i]));
     lv_obj_t* l = lv_label_create(c);
-    lv_label_set_text(l, kLabels[i]);
+    lv_label_set_text(l, kLabels[acts[i]]);
     lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_center(l);
@@ -19342,6 +19725,20 @@ static void accentPopupsToggleCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Accent popups: on") : TR("Accent popups: off"), 1100);
 }
 
+#if CAP_SPELLCHECK
+// Spell suggestions on/off. Persisted + live, like the accent popups above.
+static void spellCheckToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  s_spell_check = on;
+#if defined(ESP32)
+  touchPrefsSetSpellCheck(on);
+#endif
+  if (!on) spellBoxHide();
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Spell suggestions: on") : TR("Spell suggestions: off"), 1100);
+}
+#endif
+
 // One handler for every per-language switch in the multi-select list. The
 // layout id is stashed in the switch's user_data. Flipping a switch updates the
 // enabled-mask (persisted + live) and refreshes the on-screen keyboard, which
@@ -21029,6 +21426,61 @@ static void p4KbLightPickCb(lv_event_t* e) {
 }
 #endif
 
+#if CAP_EMOJI_PACK_DOWNLOAD
+static void emojiDlNoteRefresh() {
+  if (s_emojidl_btn) {
+    if (s_emojidl_state == 1) lv_obj_add_state(s_emojidl_btn, LV_STATE_DISABLED);
+    else                      lv_obj_clear_state(s_emojidl_btn, LV_STATE_DISABLED);
+  }
+  if (!s_emojidl_note) return;
+  const char* t;
+  switch (s_emojidl_state) {
+    case 1:  t = TR("Downloading emoji pack…"); break;
+    case 2:  t = TR("Emoji pack downloaded. It applies after a restart."); break;
+    case 3:  t = TR("Emoji pack download failed"); break;
+    default:
+      t = WiFi.status() != WL_CONNECTED ? TR("Connect to Wi-Fi to download the emoji pack.")
+        : s_emojidl_had_pack ? TR("Emoji pack installed. Downloading another will replace it.")
+        : TR("Download the emoji pack over Wi-Fi. A microSD card is required.");
+  }
+  lv_label_set_text(s_emojidl_note, t);
+}
+
+static void emojiDlPollCb(lv_timer_t*) {
+  if (s_emojidl_state == 1) return;
+  if (s_emojidl_timer) { lv_timer_del(s_emojidl_timer); s_emojidl_timer = nullptr; }
+  emojiDlNoteRefresh();
+  if (g_lv.task)
+    g_lv.task->showAlert(s_emojidl_state == 2 ? TR("Emoji pack downloaded. It applies after a restart.")
+                                              : TR("Emoji pack download failed"), 2600);
+}
+
+static void emojiDlStart() {
+  if (emojiPackDownloadBusy()) return;
+  if (WiFi.status() != WL_CONNECTED) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Connect to Wi-Fi to download the emoji pack."), 2200);
+    return;
+  }
+  if (!fmSdTryMount() || SD.cardType() == CARD_NONE) {
+    if (g_lv.task) g_lv.task->showAlert(TR("No SD card"), 1800);
+    return;
+  }
+  s_emojidl_state = 1;
+  s_emojidl_request = true;   // the worker downloads, checks and installs it
+  emojiDlNoteRefresh();
+  if (!s_emojidl_timer) s_emojidl_timer = lv_timer_create(emojiDlPollCb, 400, nullptr);
+}
+
+static void emojiPackDownloadCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || emojiPackDownloadBusy()) return;
+  if (emojiPackFileLocations())
+    showConfirm(TR("Replace the installed emoji pack? A custom pack may be overwritten."),
+                TR("Replace"), emojiDlStart);
+  else
+    emojiDlStart();
+}
+#endif
+
 static void buildKeyboardPage() {
 #if KB_BL_DIMMABLE
   // Keyboard backlight (#84, the M9 since #664): a live slider plus one-tap presets.
@@ -21102,6 +21554,22 @@ static void buildKeyboardPage() {
                  s_accent_popups,
 #endif
                  accentPopupsToggleCb);
+#if CAP_SPELLCHECK
+    // Finishing a word the English list doesn't know offers corrections above the
+    // message box. English UI only.
+#if SPELL_KEY_NAV
+    const char* spell_help = "English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.";
+#else
+    const char* spell_help = "English only. Tap a correction above the message box.";
+#endif
+    setSwitchRow(c, "Spell suggestions", spell_help,
+#if defined(ESP32)
+                 touchPrefsGetSpellCheck(),
+#else
+                 s_spell_check,
+#endif
+                 spellCheckToggleCb);
+#endif
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
     setSwitchRow(c, "Enter key sends message", "Off: Enter adds a new line, and Send sends.",
 #if defined(ESP32)
@@ -21141,6 +21609,16 @@ static void buildKeyboardPage() {
                  touchPrefsGetKbdNav(), pagerKbdNavToggleCb);
   }
   setNavKeyCards();
+#endif
+#if CAP_EMOJI_PACK_DOWNLOAD
+  {
+    lv_obj_t* c = setCard(TR("Emoji pack"));
+    s_emojidl_had_pack = emojiPackFileLocations() != 0;   // once, as the page opens
+    s_emojidl_note = setNote(c, TR("Download the emoji pack over Wi-Fi. A microSD card is required."));
+    s_emojidl_btn = setButton(c, LV_SYMBOL_DOWNLOAD, TR("Download emoji pack"),
+                              emojiPackDownloadCb, nullptr, SET_PRIMARY);
+    emojiDlNoteRefresh();
+  }
 #endif
 #if CAP_TRACKBALL
   {
@@ -28353,6 +28831,7 @@ static bool terminalHandleVirtualKeyboardReady() {
   if (!s_term_input_ta || s_kb_bind_ta != s_term_input_ta) return false;
   accentExit();
   accentBoxHide();
+  spellBoxHide();
   mentionBoxHide();
   terminalSubmit();
   hideKb();
@@ -38437,6 +38916,41 @@ static bool luaStoreHttpToFile(WiFiClient& client, HTTPClient& http, const char*
   if (!ok || total != (size_t)want) { fs->remove(path); return false; }
   return true;
 }
+
+#if CAP_EMOJI_PACK_DOWNLOAD
+static unsigned emojiPackFileLocations() {
+  fs::FS* data = luaHostAppFs();
+  fs::FS* card = SD.cardType() != CARD_NONE ? &SD : nullptr;
+  if (!card && data == &SD) data = nullptr;
+  return EmojiPackDownload::locations(card, data);
+}
+
+// Tile worker: download the pack to a temporary file, check its header against its
+// size, and move it in place (EmojiPackDownload.h). The live pack is never touched:
+// loading the new one here would free tables that drawn emoji still point into.
+// Plain http through the worker's own client: no TLS handshake, no extra task.
+static bool emojiPackDownloadWorker(WiFiClient& client, HTTPClient& http) {
+  using namespace EmojiPackDownload;
+  if (WiFi.status() != WL_CONNECTED || SD.cardType() == CARD_NONE) return false;
+  if (emojiPackLoading()) return false;   // the boot load still reads the current pack
+  if (!SD.exists("/emoji") && !SD.mkdir("/emoji")) return false;
+  SD.remove(kTempPath);
+  // luaStoreHttpToFile streams through a 4 KB internal buffer (SD writes from PSRAM
+  // come back short) and deletes a partial file.
+  if (!luaStoreHttpToFile(client, http, kUrl, &SD, kTempPath, kMaxFile)) return false;
+  bool ok = false;
+  {
+    File f = SD.open(kTempPath, FILE_READ);
+    uint8_t h[kHeaderSize];
+    ok = f && f.read(h, sizeof h) == sizeof h && headerOk(h, (uint32_t)f.size());
+    if (f) f.close();
+  }
+  if (ok) ok = install(SD);
+  if (!ok) SD.remove(kTempPath);
+  return ok;
+}
+#endif
+
 static bool luaStoreFetchAppFiles(WiFiClient& client, HTTPClient& http, fs::FS* fs,
                                   const char* id, const char* ver, const char* list) {
   char rel[64], dir[96];
@@ -39427,6 +39941,16 @@ static void tileFetchTaskFn(void* arg) {
       s_luainst_done = true;
       continue;
     }
+#if CAP_EMOJI_PACK_DOWNLOAD
+    // Emoji pack (#831): download, check and install; it is read at the next start.
+    // The state goes from 1 to 2/3 only when the file work is done (the SD guards
+    // below key on it).
+    if (s_emojidl_request) {
+      s_emojidl_request = false;
+      s_emojidl_state = emojiPackDownloadWorker(client, http) ? 2 : 3;
+      continue;
+    }
+#endif
     if (s_luascan_request) {
       s_luascan_request = false;
       luaStoreScanInstalled(true);           // SD listing off the UI thread
@@ -46232,6 +46756,9 @@ static void settingsCategoryDrop() {
     s_ota_prev_btn = nullptr;
     g_lv.settings_status = nullptr; g_lv.diag_id_label = nullptr; g_lv.diag_label = nullptr;
   }
+#if CAP_EMOJI_PACK_DOWNLOAD
+  if (s_settings_open_cat == CAT_KEYBOARD) { s_emojidl_btn = nullptr; s_emojidl_note = nullptr; }
+#endif
 #if defined(HAS_TDECK_GT911)
   if (s_settings_open_cat == CAT_LOCK) {   // null the sleep-diag live-label ptrs
     s_sleep_diag_lbl = nullptr; s_sleep_diag_lbl2 = nullptr;
@@ -47943,7 +48470,8 @@ static constexpr lv_coord_t  kChatCompactPadV   = 1;
 static constexpr lv_coord_t  kChatDividerH       = 16;
 
 static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool channel_mode,
-                                          bool thread_is_room, lv_coord_t bubble_max_w);
+                                          bool thread_is_room, lv_coord_t bubble_max_w,
+                                          int logical_i);
 static lv_coord_t chatMeasureMessageRowHeight(const UITask::UIMessage& m, LvChatPanel* p,
                                               int logical_i);
 static lv_coord_t chatVirtCreateMessageRow(LvChatPanel* p, int logical_i, int ring_idx,
@@ -47960,6 +48488,13 @@ struct ChatBubbleDisplay {
   char retro_sender[UITask::MAX_SENDER_NAME + 1];
   char san_sender[UITask::MAX_SENDER_NAME + 8];
   char san_text[UITask::MAX_MSG_TEXT + 8];
+#if CAP_REPLY_QUOTE
+  // Reply quote (#641), filled by chatReplyQuoteFill for bubbles only.
+  bool has_quote = false;
+  char quote_sender[UITask::MAX_SENDER_NAME + 8];
+  char quote_text[96];   // drawn on one line with a trailing "...", so this is plenty
+  lv_color_t quote_name_col;
+#endif
 };
 
 struct ChatVirtLayout {
@@ -48331,6 +48866,110 @@ static void chatParseMessageDisplay(const UITask::UIMessage& m, bool channel_mod
   copyUtf8ReplacingMissingGlyphs(chatMessageFont(), d.san_text, sizeof(d.san_text), d.show_text);
 }
 
+#if CAP_REPLY_QUOTE
+// ---- Reply quotes (#641) -----------------------------------------------------
+// A channel or room message that answers someone ("@[Name] text", the way MeshCore
+// Open and the phone app write a reply) gets a one-line quote of the message it
+// answers above its text. The rules that keep that guess safe are in ReplyQuote.h;
+// the text itself is never changed, so the tag, its mention colour and what every
+// other client shows stay the same.
+//
+// Measuring and drawing both ask for the quote, so the answer is remembered per
+// message (by its seq, which is never reused): the few messages before a reply are
+// looked at once per layout, not on every redraw. A full layout rebuild (another
+// thread, a delete, the ring moving on) forgets it all.
+struct ReplyQuoteMemo { uint32_t seq; uint32_t quoted_seq; int ring; };   // ring -1: no quote
+static ReplyQuoteMemo s_rq_memo[24];
+static uint8_t        s_rq_memo_next = 0;
+static void replyQuoteForget() { memset(s_rq_memo, 0, sizeof s_rq_memo); s_rq_memo_next = 0; }
+
+static constexpr lv_coord_t kReplyQuotePad = 6;   // text inset from the accent bar
+static constexpr lv_coord_t kReplyQuoteBar = 3;   // accent bar in the quoted author's colour
+static constexpr lv_coord_t kReplyQuoteGap = 4;   // between the quote and the message text
+static lv_coord_t chatReplyQuoteBoxH() {
+  return 4 + lv_font_get_line_height(&g_font_semi_12) + lv_font_get_line_height(&g_font_12);
+}
+
+// Who wrote a channel or room message, as a reply names them: you for your own,
+// else the sender field, or the "Name: " leading the text when it came without one
+// (the same split chatParseMessageDisplay makes). *body gets the text after it.
+static const char* chatMsgAuthor(const UITask::UIMessage& m, bool thread_is_room,
+                                 char* buf, size_t cap, const char** body) {
+  *body = m.text;
+  buf[0] = '\0';
+  if (m.outgoing) return the_mesh.getNodePrefs()->node_name;
+  if (thread_is_room || m.sender[0] == '\0' ||
+      (m.sender[0] == 'r' && m.sender[1] == 'x' && m.sender[2] == '\0')) {
+    const char* b = ChannelSenderSplit::split(m.text, buf, cap);
+    if (buf[0]) { *body = b; return buf; }
+  }
+  return m.sender;
+}
+
+// The ring slot of the message `m` (at logical_i in the open thread) answers, or -1.
+static int replyQuoteRing(const UITask::UIMessage& m, int logical_i, const char* name,
+                          uint32_t* quoted_seq) {
+  if (m.seq) {
+    for (const ReplyQuoteMemo& e : s_rq_memo)
+      if (e.seq == m.seq) { *quoted_seq = e.quoted_seq; return e.ring; }
+  }
+  int ring = -1;
+  *quoted_seq = 0;
+  if (logical_i > 0 && s_chat_msg_idx && logical_i <= s_chat_msg_idx_cap) {
+    char author[UITask::MAX_SENDER_NAME + 1];
+    const int hit = ReplyQuote::pick(name, m.ts, logical_i,
+        [&](int i, const char** sender, uint32_t* ts) {
+          const UITask::UIMessage* q = g_lv.task->messageAt(s_chat_msg_idx[logical_i - 1 - i]);
+          if (!q || !q->thread[0]) return false;   // deleted
+          const char* body;
+          *sender = chatMsgAuthor(*q, s_chat_virt.thread_is_room, author, sizeof author, &body);
+          *ts = q->ts;
+          return true;
+        });
+    if (hit >= 0) {
+      ring = s_chat_msg_idx[logical_i - 1 - hit];
+      if (const UITask::UIMessage* q = g_lv.task->messageAt(ring)) *quoted_seq = q->seq;
+    }
+  }
+  if (m.seq) {
+    s_rq_memo[s_rq_memo_next] = { m.seq, *quoted_seq, ring };
+    s_rq_memo_next = (uint8_t)((s_rq_memo_next + 1) % (sizeof s_rq_memo / sizeof s_rq_memo[0]));
+  }
+  return ring;
+}
+
+static bool chatReplyQuoteFill(const UITask::UIMessage& m, int logical_i, bool channel_mode,
+                               ChatBubbleDisplay& d) {
+  d.has_quote = false;
+  if (!(channel_mode || s_chat_virt.thread_is_room) || !g_lv.task || logical_i <= 0) return false;
+  char name[UITask::MAX_SENDER_NAME + 1];
+  if (!ReplyQuote::parse(d.show_text, name, sizeof name)) return false;
+  uint32_t quoted_seq = 0;
+  const int ring = replyQuoteRing(m, logical_i, name, &quoted_seq);
+  const UITask::UIMessage* q = ring >= 0 ? g_lv.task->messageAt(ring) : nullptr;
+  if (!q || !q->thread[0] || q->seq != quoted_seq) return false;   // gone since
+  char author_buf[UITask::MAX_SENDER_NAME + 1];
+  const char* body;
+  const char* author = chatMsgAuthor(*q, s_chat_virt.thread_is_room, author_buf, sizeof author_buf, &body);
+  // A quoted reply shows its own text, not the name it answered.
+  char nested[UITask::MAX_SENDER_NAME + 1];
+  if (const char* b = ReplyQuote::parse(body, nested, sizeof nested)) body = b;
+  copyUtf8ReplacingMissingGlyphs(&g_font_semi_12, d.quote_sender, sizeof d.quote_sender,
+                                 q->outgoing ? author : senderShownName(author));
+  copyUtf8ReplacingMissingGlyphs(&g_font_12, d.quote_text, sizeof d.quote_text, body);
+  for (char* c = d.quote_text; *c; ++c)
+    if (*c == '\n' || *c == '\r' || *c == '\t') *c = ' ';
+  d.quote_name_col = lv_color_hex(COLOR_CHAT_TEXT);
+#if !defined(HAS_TDECK_PRO)
+  if (!s_theme_high_contrast) usernameBubbleColors(author, nullptr, &d.quote_name_col);
+#else
+  d.quote_name_col = lv_color_black();
+#endif
+  d.has_quote = true;
+  return true;
+}
+#endif  // CAP_REPLY_QUOTE
+
 // ---- Chat virt serial diagnostics -------------------------------------------
 #if TRACE_MESSAGE_SCROLL_ACTIVITY
 static bool s_chat_virt_at_store_top    = false;
@@ -48622,12 +49261,19 @@ static void chatFootChainDrawCb(lv_event_t* e) {
 }
 
 static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool channel_mode,
-                                          bool thread_is_room, lv_coord_t bubble_max_w) {
+                                          bool thread_is_room, lv_coord_t bubble_max_w,
+                                          int logical_i) {
   ChatBubbleDisplay d{};
   chatParseMessageDisplay(m, channel_mode, thread_is_room, d);
   const lv_coord_t inner_max_w = bubble_max_w - 2 * kChatBubblePadH;
   const bool show_sender = (channel_mode || thread_is_room) && !m.outgoing && d.san_sender[0];
   lv_coord_t inner_y = show_sender ? lv_font_get_line_height(&g_font_semi_12) : 0;
+#if CAP_REPLY_QUOTE
+  // Same fixed height chatVirtCreateBubble draws: one name line, one text line.
+  if (chatReplyQuoteFill(m, logical_i, channel_mode, d)) inner_y += chatReplyQuoteBoxH() + kReplyQuoteGap;
+#else
+  (void)logical_i;
+#endif
 
   const lv_font_t* msg_font = chatMessageFont();
   lv_point_t txt_size;
@@ -48792,7 +49438,7 @@ static lv_coord_t chatMeasureMessageRowHeight(const UITask::UIMessage& m, LvChat
     return chatMeasureCompactRowHeight(m, p, logical_i, d);
   }
   return chatMeasureBubbleHeight(m, p->channel_mode, s_chat_virt.thread_is_room,
-                                 s_chat_virt.bubble_max_w);
+                                 s_chat_virt.bubble_max_w, logical_i);
 }
 
 // Safe teardown for floating chat widgets — same pattern as popupClose: if the
@@ -49031,6 +49677,9 @@ static bool chatVirtTryAppendLayout(LvChatPanel* p, int n, int divider_i) {
 static bool chatVirtRebuildLayout(LvChatPanel* p, int n, int divider_i) {
   if (!p || !g_lv.task || n <= 0 || !s_chat_msg_idx) return false;
   if (chatVirtTryAppendLayout(p, n, divider_i)) return true;
+#if CAP_REPLY_QUOTE
+  replyQuoteForget();
+#endif
   chatVirtFreeOffsets();
   s_chat_virt.offsets = (int32_t*)heap_caps_malloc(sizeof(int32_t) * (size_t)(n + 1),
                                                     MALLOC_CAP_SPIRAM);
@@ -49802,8 +50451,19 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   lv_coord_t sender_w = 0;
   if (show_sender_line) sender_w = lv_txt_get_width(d.san_sender, strlen(d.san_sender), &g_font_semi_12, 0, LV_TEXT_FLAG_NONE);
   lv_coord_t inner_w = LV_MAX(txt_w_used > 0 ? txt_w_used : 1, LV_MIN(sender_w, kInnerMaxW));
+  lv_coord_t quote_h = 0;
+#if CAP_REPLY_QUOTE
+  // A short reply ("yes") widens its bubble so the quote above it is readable.
+  if (chatReplyQuoteFill(m, logical_i, p->channel_mode, d)) {
+    const lv_coord_t qw = LV_MAX(
+        lv_txt_get_width(d.quote_sender, strlen(d.quote_sender), &g_font_semi_12, 0, LV_TEXT_FLAG_NONE),
+        lv_txt_get_width(d.quote_text, strlen(d.quote_text), &g_font_12, 0, LV_TEXT_FLAG_NONE));
+    inner_w = LV_MAX(inner_w, LV_MIN((lv_coord_t)(qw + kReplyQuoteBar + 2 * kReplyQuotePad), kInnerMaxW));
+    quote_h = chatReplyQuoteBoxH() + kReplyQuoteGap;
+  }
+#endif
   const lv_coord_t bw = LV_MIN((lv_coord_t)(inner_w + 2 * kChatBubblePadH), kBubbleMaxW);
-  const lv_coord_t bh = kChatBubblePadV * 2 + (show_sender_line ? sender_lh : 0) + wrapped.y;
+  const lv_coord_t bh = kChatBubblePadV * 2 + (show_sender_line ? sender_lh : 0) + quote_h + wrapped.y;
 
   ChatFoot foot;
   chatBuildFoot(m, p->channel_mode, foot);
@@ -49865,6 +50525,58 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
     lv_obj_set_pos(slbl, 0, 0);
     inner_y = sender_lh;
   }
+#if CAP_REPLY_QUOTE
+  if (d.has_quote) {
+    // The quote: a darker shade of this bubble, an accent bar in the quoted author's
+    // colour, their name, and one line of what they wrote. Not clickable, so a tap
+    // or long-press still lands on the row.
+    const lv_coord_t box_h = chatReplyQuoteBoxH();
+    lv_obj_t* qb = lv_obj_create(bubble);
+    lv_obj_remove_style_all(qb);
+    lv_obj_clear_flag(qb, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(qb, inner_w, box_h);
+    lv_obj_set_pos(qb, 0, inner_y);
+    lv_obj_set_style_radius(qb, 2, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+    lv_obj_set_style_border_color(qb, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_border_width(qb, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(qb, LV_OPA_COVER, LV_PART_MAIN);
+#else
+    lv_obj_set_style_bg_color(qb, lv_color_mix(lv_color_black(), bubble_bg, 72), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(qb, LV_OPA_COVER, LV_PART_MAIN);
+#endif
+    lv_obj_t* bar = lv_obj_create(qb);
+    lv_obj_remove_style_all(bar);
+    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(bar, kReplyQuoteBar, box_h);
+    lv_obj_set_pos(bar, 0, 0);
+    lv_obj_set_style_bg_color(bar, d.quote_name_col, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_MAIN);
+    const lv_coord_t tx = kReplyQuoteBar + kReplyQuotePad;
+    const lv_coord_t tw = LV_MAX((lv_coord_t)(inner_w - tx - kReplyQuotePad), (lv_coord_t)1);
+    const lv_coord_t name_lh = lv_font_get_line_height(&g_font_semi_12);
+    lv_obj_t* qn = lv_label_create(qb);
+    lv_label_set_long_mode(qn, LV_LABEL_LONG_DOT);
+    lv_label_set_text(qn, d.quote_sender);
+    lv_obj_set_style_text_font(qn, &g_font_semi_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(qn, d.quote_name_col, LV_PART_MAIN);
+    lv_obj_set_size(qn, tw, name_lh);
+    lv_obj_set_pos(qn, tx, 2);
+    lv_obj_t* qt = lv_label_create(qb);
+    lv_label_set_long_mode(qt, LV_LABEL_LONG_DOT);
+    lv_label_set_text(qt, d.quote_text);
+    lv_obj_set_style_text_font(qt, &g_font_12, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+    lv_obj_set_style_text_color(qt, lv_color_black(), LV_PART_MAIN);
+#else
+    lv_obj_set_style_text_color(qt, lv_color_hex(COLOR_CHAT_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_opa(qt, s_theme_high_contrast ? LV_OPA_COVER : 200, LV_PART_MAIN);
+#endif
+    lv_obj_set_size(qt, tw, lv_font_get_line_height(&g_font_12));
+    lv_obj_set_pos(qt, tx, 2 + name_lh);
+    inner_y += quote_h;
+  }
+#endif
 
   lv_obj_t* tlbl = lv_label_create(bubble);
   lv_obj_set_style_text_font(tlbl, msg_font, LV_PART_MAIN);
@@ -52174,6 +52886,7 @@ static void updatePagerAltBackspaceChord() {
   // content navGoToMainTab() switches away from -- close them explicitly
   // first so a stray overlay doesn't keep floating over the Home screen.
   accentBoxHide();
+  spellBoxHide();
   mentionBoxHide();
   navGoToMainTab(HOME_TAB_INDEX);
   if (g_lv.task) g_lv.task->noteUserInput();
@@ -53333,6 +54046,12 @@ static void updatePagerEncoder(unsigned long now) {
     // Editing a slider: the wheel moves its value (preview only, see pagerSliderEditBegin).
     for (; delta > 0; delta--) navSliderNudge(s_pager_slider_edit, +1);
     for (; delta < 0; delta++) navSliderNudge(s_pager_slider_edit, -1);
+#if SPELL_KEY_NAV
+  } else if (spellNavActive()) {
+    // Spell row (handleHwKey()'s Fn+Space entry): the same exclusive capture.
+    for (; delta > 0; delta--) spellNavMove(+1);
+    for (; delta < 0; delta++) spellNavMove(-1);
+#endif
   } else if (navOpenDropdown()) {
     // An open dropdown captures the encoder: lv_dropdown's own key handling only
     // understands LV_KEY_UP/DOWN to move the highlighted row (+ENTER to confirm,
@@ -53417,7 +54136,11 @@ static void updatePagerEncoder(unsigned long now) {
     // The keyboard layer lacks %, <, >, and several non-ASCII symbols. Holding
     // Fn before pressing the knob opens the shared picker for the active field.
     if (pagerKeyboardAltHeld() && !s_emoji_sheet && !s_mentionnav_active &&
-        !s_accentnav_active && !navOpenDropdown()) {
+        !s_accentnav_active &&
+#if SPELL_KEY_NAV
+        !spellNavActive() &&
+#endif
+        !navOpenDropdown()) {
       lv_obj_t* ta = navFocusedTextarea();
       if (ta && lv_obj_is_valid(ta)) {
         pagerKeyboardMarkAltUsed();
@@ -53437,6 +54160,9 @@ static void updatePagerEncoder(unsigned long now) {
     if (s_mentionnav_active)        mentionNavConfirm(); // picking a mention: confirm the highlighted one
     else if (s_accentnav_active)    accentNavConfirm();  // picking an accent: confirm the highlighted one
     else if (pagerSliderEditClick()) {}                  // a slider: enter edit mode / save and leave it
+#if SPELL_KEY_NAV
+    else if (spellNavActive())      spellNavConfirm();   // picking a spelling: take the highlighted one
+#endif
     else if (!navEnterBubble())     navPushTap(LV_KEY_ENTER);
   }
   if (!held && s_was_held) s_press_consumed = false;
@@ -56526,6 +57252,25 @@ static bool m9AccentBoxHandleKey(int key) {
   return true;   // swallow the rest while picking
 }
 
+#if SPELL_KEY_NAV
+// The spell row, unlike the accent box, stays up while the next word is typed,
+// so it does not take LEFT/RIGHT by itself: UP from the field steps in, then
+// LEFT/RIGHT pick, Enter takes, Back/Backspace close, and DOWN or typing steps
+// back out and leaves the row up. Called after m9AccentBoxHandleKey(), which
+// owns the arrows while an accent box is up, and before m9HandleArrowKey().
+static bool m9SpellRowHandleKey(int key) {
+  if (!spellNavActive()) return key == M9_KEY_UP && spellNavBegin();
+  if (key == M9_KEY_LEFT)  { spellNavMove(-1); return true; }
+  if (key == M9_KEY_RIGHT) { spellNavMove(+1); return true; }
+  if (key == M9_KEY_UP)    return true;
+  if (key == M9_KEY_DOWN)  { spellNavEnd(); return true; }
+  if (key == 0x0D)         { spellNavConfirm(); return true; }
+  if (key == 0x08 || key == 0x7F || key == M9_KEY_HW_BACK) { spellBoxHide(); return true; }
+  spellNavEnd();
+  return false;   // typing carries on into the field
+}
+#endif
+
 static bool m9HandleNavKey(int key) {
   if (!s_kbd_nav) return false;
   switch (key) {
@@ -57374,6 +58119,9 @@ if (g_lv.task && g_lv.task->isManualLock()) {
   // The box only exists for the moment after typing a base letter, so the
   // arrows go back to the caret the instant it closes.
   if (m9AccentBoxHandleKey(key)) return;
+#if SPELL_KEY_NAV
+  if (m9SpellRowHandleKey(key)) return;
+#endif
   if (m9HandleArrowKey(key, ta)) return;    // ← runs BEFORE the if(!ta) split
 #endif
   if (!ta) {
@@ -57642,6 +58390,17 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     accentNavRestyle();
     return;
   }
+#if SPELL_KEY_NAV
+  // Spell row: Fn+Space steps in when no accent box is up (right after a word
+  // is finished, there isn't one). Typing steps back out and leaves it up.
+  if (spellNavActive()) {
+    if (key == 0x08 || key == 0x7F) { spellBoxHide(); return; }
+    if (key == 0x0D)                { spellNavConfirm(); return; }
+    spellNavEnd();
+  } else if (key == ' ' && pagerKeyboardAltHeld() && spellNavBegin()) {
+    return;
+  }
+#endif
 #endif
 #if defined(HAS_M9_KEYBOARD)
   // M9 has a dedicated hardware Back key — unlike the CAP_TRACKBALL board's backspace-on-
@@ -57718,6 +58477,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     // goes through hideKb(); this covers the physical-keyboard Enter.
     accentBoxHide();
     mentionBoxHide();
+    spellBoxHide();
     // The one-field text dialog (rename, new folder, nickname, wada.ui.input): Enter is
     // OK. Through the generic path below it moved the focus to the next control, which
     // is Cancel, so a second Enter cancelled and wada.ui.input handed the app nil.
@@ -57966,6 +58726,7 @@ static void bleKbdDispatch(int key) {
         s_nav_ta_editing = false;
         accentBoxHide();
         mentionBoxHide();
+        spellBoxHide();
       }
       bleKbdBack();
       break;
@@ -57988,7 +58749,7 @@ static void bleKbdDispatch(int key) {
 // ---- External Bluetooth keyboard on a touchscreen-only board -------------------
 // There is no handleHwKey() here: keys go straight into the field the on-screen
 // keyboard is bound to (the field itself while the Bluetooth keyboard types, the
-// edit strip when a second tap summoned the keys), and the keys that only move
+// edit strip when the edit menu summoned the keys), and the keys that only move
 // a focus highlight are left out, since a touchscreen has none.
 static bool popupRegistryAny();
 static bool popupRegistryDismissTop();
@@ -58010,6 +58771,7 @@ static void bleKbdTouchDelete(lv_obj_t* ta, bool forward) {
 static void bleKbdTouchEnter(lv_obj_t* ta) {
   accentBoxHide();
   mentionBoxHide();
+  spellBoxHide();
   // The one-field text dialog (rename, new folder, nickname, wada.ui.input): Enter is
   // OK, as handleHwKey does it on the keyboard boards. The keyboard's READY below only
   // confirmed the field and left the dialog open, so wada.ui.input never returned.
@@ -58252,6 +59014,7 @@ static void bleKbdDispatch(int key) {
         s_nav_ta_editing = false;
         accentBoxHide();
         mentionBoxHide();
+        spellBoxHide();
       }
       bleKbdBack();
       break;
@@ -81121,7 +81884,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       if (s_ui_data_fs && (nc == 0 || cands[0] != s_ui_data_fs)) cands[nc++] = s_ui_data_fs;
 
     #if CAP_EMOJI_PACK
-      static const char* const kPackPaths[2] = { "/emoji/emoji.pack", "/emoji.pack" };
+      // A download cut off between its two renames left only the backup (#831).
+      if (nc && cands[0] == &SD && !EmojiPackDownload::restoreBackup(SD))
+        pushDiagLine("emoji: failed to restore pack backup");
+      static const char* const kPackPaths[2] = { EmojiPackDownload::kPath, EmojiPackDownload::kRootPath };
       File ep;
       for (int i = 0; i < nc && !ep; ++i)
         for (int p = 0; p < 2 && !ep; ++p) ep = cands[i]->open(kPackPaths[p], FILE_READ);
@@ -81421,6 +82187,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
     // Accent-popup picker (both boards: on-screen + physical keyboard). Default on.
     s_accent_popups = touchPrefsGetAccentPopups();
+#if CAP_SPELLCHECK
+    s_spell_check = touchPrefsGetSpellCheck();
+#endif
     {
       multi_heap_info_t hi{};
       heap_caps_get_info(&hi, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -84617,6 +85386,7 @@ static void maxGlanceTapCb(lv_event_t*) { s_max_glance_tapped = true; }
 // pager back ladder use, so nothing is left floating over the Home tab.
 static void maxGoHome() {
   accentBoxHide();
+  spellBoxHide();
   mentionBoxHide();
   for (int i = 0; i < 4 && anyPopupOpen(); ++i) hwKeyDismissTopPopup();
   if (s_apppage_close) s_apppage_close();
@@ -85601,6 +86371,9 @@ static bool sdRuntimeLifecycleBusy() {
 #if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
   busy = busy || s_sdfw_request || s_sdfw_state == 1;   // "Save update bin to SD" holds a file open (#734)
 #endif
+#if CAP_EMOJI_PACK_DOWNLOAD
+  busy = busy || emojiPackDownloadBusy();               // the emoji pack download writes to the card
+#endif
 #if CAP_SD || defined(TLORA_PAGER)
   // Before a lifecycle owner requests a backend pause, keep the conservative
   // queued+active gate used by format/reset paths. Once the pause is asserted,
@@ -85925,6 +86698,9 @@ static void sdHealthTick() {
   // moment it picks the job up, so the request flag alone left the whole download
   // unguarded: a probe or remount here could SD.end() under its open file (#734).
   if (s_sdfw_request || s_sdfw_state == 1) return;
+#endif
+#if CAP_EMOJI_PACK_DOWNLOAD
+  if (emojiPackDownloadBusy()) return;   // same for the emoji pack download (#831)
 #endif
   // Probe when some SD user flagged a failure (rate-limited to 1/5 s), and
   // also on a slow 30 s background cadence — a card yanked while nothing is

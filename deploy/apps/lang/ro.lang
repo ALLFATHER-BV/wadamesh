@@ -4,6 +4,16 @@
 # ver: 34
 # name: Română
 # base: ro
+Connect to Wi-Fi to download the emoji pack.	Conectează-te la Wi-Fi pentru a descărca pachetul de emoji.
+Download emoji pack	Descarcă pachetul de emoji
+Download the emoji pack over Wi-Fi. A microSD card is required.	Descarcă pachetul de emoji prin Wi-Fi. Este necesar un card microSD.
+Downloading emoji pack…	Se descarcă pachetul de emoji…
+Emoji pack	Pachet de emoji
+Emoji pack installed. Downloading another will replace it.	Un pachet de emoji este instalat. Descărcarea altuia îl va înlocui.
+Replace the installed emoji pack? A custom pack may be overwritten.	Înlocuiești pachetul de emoji instalat? Un pachet personalizat poate fi suprascris.
+Replace	Înlocuiește
+Emoji pack download failed	Descărcarea pachetului de emoji a eșuat
+Emoji pack downloaded. It applies after a restart.	Pachetul de emoji a fost descărcat. Se aplică după repornire.
  (device behind)	 (dispozitiv în urmă)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d puncte de acoperire · %lu salvate pe SD#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: se aşteaptă fix GPS…#
@@ -2489,3 +2499,8 @@ Type a 6-digit code	Tastează un cod de 6 cifre
 New random code each session	Un cod aleatoriu nou la fiecare sesiune
 Too easy to guess. Pick another code.	Prea ușor de ghicit. Alege alt cod.
 Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Oprit: un cod aleatoriu nou la fiecare sesiune. Pornit: mereu același cod. Codul trece necriptat prin Wi-Fi-ul tău, deci oricine îl vede sau îl ghicește acolo se poate conecta. Încercările greșite blochează de fiecare dată mai mult, până la o oră.
+Spell suggestions	Sugestii de ortografie
+Spell suggestions: on	Sugestii de ortografie: pornite
+Spell suggestions: off	Sugestii de ortografie: oprite
+English only. Tap a correction above the message box.	Doar în engleză. Atinge o corectură deasupra câmpului de mesaj.
+English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Doar în engleză. Apasă Sus pentru corecturi, Stânga sau Dreapta pentru a alege una, apoi Enter.

@@ -4,6 +4,16 @@
 # ver: 34
 # name: Српски
 # base: sr
+Connect to Wi-Fi to download the emoji pack.	Повежите се на Wi-Fi да бисте преузели пакет емоџија.
+Download emoji pack	Преузми пакет емоџија
+Download the emoji pack over Wi-Fi. A microSD card is required.	Преузмите пакет емоџија преко Wi-Fi-ја. Потребна је microSD картица.
+Downloading emoji pack…	Преузимање пакета емоџија…
+Emoji pack	Пакет емоџија
+Emoji pack installed. Downloading another will replace it.	Пакет емоџија је инсталиран. Преузимање другог ће га заменити.
+Replace the installed emoji pack? A custom pack may be overwritten.	Заменити инсталирани пакет емоџија? Прилагођени пакет може бити преписан.
+Replace	Замени
+Emoji pack download failed	Преузимање пакета емоџија није успело
+Emoji pack downloaded. It applies after a restart.	Пакет емоџија је преузет. Важи након рестарта.
  (device behind)	 (уређај касни)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d тачака покривености · %lu уписано на SD#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: чекање GPS-а…#
@@ -2488,3 +2498,8 @@ Type a 6-digit code	Унесите шестоцифрени код
 New random code each session	Нови насумични код за сваку сесију
 Too easy to guess. Pick another code.	Превише лако за погађање. Изаберите други код.
 Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Искључено: нови насумични код за сваку сесију. Укључено: увек исти код. Код пролази кроз ваш Wi-Fi нешифрован, па свако ко га тамо види или погоди може да се повеже. Погрешни покушаји закључавају сваки пут дуже, до једног сата.
+Spell suggestions	Предлози правописа
+Spell suggestions: on	Предлози правописа: укљ
+Spell suggestions: off	Предлози правописа: искљ
+English only. Tap a correction above the message box.	Само енглески. Додирните исправку изнад поља за поруку.
+English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Само енглески. Притисните Горе за исправке, Лево или Десно за избор, па Enter.

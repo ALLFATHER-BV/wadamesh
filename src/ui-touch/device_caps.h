@@ -20,7 +20,8 @@
 //
 //  The board -D macros (HAS_TDECK_GT911, HAS_TANMATSU, HELTEC_LORA_V4_TFT, …) come
 //  from platformio.ini / the Tanmatsu CMakeLists and are available everywhere, so
-//  this header has no include dependencies. Only ui-touch/UITask.cpp includes it,
+//  this header has no include dependencies. Only ui-touch/UITask.cpp (and
+//  spell_en.cpp, for CAP_SPELLCHECK) include it,
 //  so the #else branch is always "the Heltec V4 TFT touch board".
 // =============================================================================
 
@@ -969,4 +970,39 @@
 // Backups listed by their date, or "Default", instead of the file name (#739).
 #ifndef CAP_BACKUP_DATE_LABELS
   #define CAP_BACKUP_DATE_LABELS 1
+#endif
+
+// A one-line quote above a channel or room message that answers someone with a
+// leading "@[Name] " (#641). Not the T-LoRa Pager: its app slot is full.
+#ifndef CAP_REPLY_QUOTE
+  #if defined(TLORA_PAGER)
+    #define CAP_REPLY_QUOTE 0
+  #else
+    #define CAP_REPLY_QUOTE 1
+  #endif
+#endif
+
+// Settings > Keyboard > Emoji pack: download the SD emoji pack over Wi-Fi (#831).
+// The download goes through the app store's file helper on the tile worker.
+#ifndef CAP_EMOJI_PACK_DOWNLOAD
+  #if CAP_EMOJI_PACK && CAP_LUA_APPS && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+    #define CAP_EMOJI_PACK_DOWNLOAD 1
+  #else
+    #define CAP_EMOJI_PACK_DOWNLOAD 0
+  #endif
+#endif
+
+// English spell suggestions over the chat composer (spell.h, #578). The word list
+// is ~66 KB of flash, deflated, and inflated into PSRAM (~115 KB) the first time a
+// word is checked. Touch boards tap a suggestion, and the Tanmatsu and ThinkNode M9
+// step into the row with their navigation keys (UITask.cpp, SPELL_KEY_NAV). Off on
+// the plain Heltec V4 (its app slot is shared with the built-in translations and
+// every other change of a release) and on the T-LoRa Pager (its slot is full).
+// The V4-R8 keeps it. Define this 0 in a board's block if another outgrows its slot.
+#ifndef CAP_SPELLCHECK
+  #if (defined(HELTEC_LORA_V4_TFT) && !defined(HELTEC_LORA_V4_R8)) || defined(TLORA_PAGER)
+    #define CAP_SPELLCHECK 0
+  #else
+    #define CAP_SPELLCHECK 1
+  #endif
 #endif

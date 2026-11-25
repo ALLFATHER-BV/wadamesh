@@ -4,6 +4,16 @@
 # ver: 34
 # name: Magyar
 # base: hu
+Connect to Wi-Fi to download the emoji pack.	Csatlakozz a Wi-Fi-hálózathoz az emoji-csomag letöltéséhez.
+Download emoji pack	Emoji-csomag letöltése
+Download the emoji pack over Wi-Fi. A microSD card is required.	Töltsd le az emoji-csomagot Wi-Fi-n keresztül. microSD-kártya szükséges.
+Downloading emoji pack…	Emoji-csomag letöltése…
+Emoji pack	Emoji-csomag
+Emoji pack installed. Downloading another will replace it.	Egy emoji-csomag telepítve van. Egy másik letöltése lecseréli.
+Replace the installed emoji pack? A custom pack may be overwritten.	Lecseréled a telepített emoji-csomagot? Egy egyéni csomag felülíródhat.
+Replace	Csere
+Emoji pack download failed	Az emoji-csomag letöltése nem sikerült
+Emoji pack downloaded. It applies after a restart.	Az emoji-csomag letöltve. Újraindítás után érvényes.
  (device behind)	 (készülék hátulján)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d lefedettségi pont · %lu mentve SD-re#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: várakozás GPS-jelre…#
@@ -2497,3 +2507,8 @@ Type a 6-digit code	Írj be egy 6 jegyű kódot
 New random code each session	Minden munkamenetben új véletlen kód
 Too easy to guess. Pick another code.	Túl könnyű kitalálni. Válassz másik kódot.
 Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Ki: minden munkamenetben új véletlen kód. Be: mindig ugyanaz a kód. A kód titkosítatlanul megy át a Wi-Fi-n, így aki ott látja vagy kitalálja, csatlakozhat. A hibás próbálkozások után a zárolás egyre hosszabb, legfeljebb egy óra.
+Spell suggestions	Helyesírási javaslatok
+Spell suggestions: on	Helyesírási javaslatok: bekapcsolva
+Spell suggestions: off	Helyesírási javaslatok: kikapcsolva
+English only. Tap a correction above the message box.	Csak angolul. Koppints egy javításra az üzenetmező felett.
+English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Csak angolul. A Fel gombbal éred el a javításokat, Balra vagy Jobbra választasz, majd Enter.

@@ -4,6 +4,16 @@
 # ver: 34
 # name: Deutsch
 # base: de
+Connect to Wi-Fi to download the emoji pack.	Verbinde dich mit WLAN, um das Emoji-Paket herunterzuladen.
+Download emoji pack	Emoji-Paket herunterladen
+Download the emoji pack over Wi-Fi. A microSD card is required.	Lade das Emoji-Paket über WLAN herunter. Eine microSD-Karte ist erforderlich.
+Downloading emoji pack…	Emoji-Paket wird heruntergeladen…
+Emoji pack	Emoji-Paket
+Emoji pack installed. Downloading another will replace it.	Ein Emoji-Paket ist installiert. Ein neuer Download ersetzt es.
+Replace the installed emoji pack? A custom pack may be overwritten.	Installiertes Emoji-Paket ersetzen? Ein eigenes Paket kann überschrieben werden.
+Replace	Ersetzen
+Emoji pack download failed	Emoji-Paket konnte nicht heruntergeladen werden
+Emoji pack downloaded. It applies after a restart.	Emoji-Paket heruntergeladen. Gilt nach Neustart.
  (device behind)	 (Gerät geht nach)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d Abdeckungspunkte · %lu auf SD gespeichert#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: warte auf GPS-Fix…#
@@ -2488,3 +2498,8 @@ Type a 6-digit code	6-stelligen Code eingeben
 New random code each session	Jede Sitzung ein neuer Zufallscode
 Too easy to guess. Pick another code.	Zu leicht zu erraten. Wähle einen anderen Code.
 Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Aus: jede Sitzung ein neuer Zufallscode. An: immer derselbe Code. Der Code geht unverschlüsselt über dein WLAN, wer ihn dort sieht oder errät, kann sich verbinden. Falsche Versuche sperren jedes Mal länger, bis zu einer Stunde.
+Spell suggestions	Rechtschreibvorschläge
+Spell suggestions: on	Rechtschreibvorschläge: ein
+Spell suggestions: off	Rechtschreibvorschläge: aus
+English only. Tap a correction above the message box.	Nur Englisch. Tippe auf eine Korrektur über dem Nachrichtenfeld.
+English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Nur Englisch. Mit Hoch zu den Korrekturen, mit Links oder Rechts eine wählen, dann Enter.

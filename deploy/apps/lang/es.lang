@@ -4,6 +4,16 @@
 # ver: 34
 # name: Español
 # base: es
+Connect to Wi-Fi to download the emoji pack.	Conéctate a Wi-Fi para descargar el paquete de emojis.
+Download emoji pack	Descargar paquete de emojis
+Download the emoji pack over Wi-Fi. A microSD card is required.	Descarga el paquete de emojis por Wi-Fi. Se necesita una tarjeta microSD.
+Downloading emoji pack…	Descargando el paquete de emojis…
+Emoji pack	Paquete de emojis
+Emoji pack installed. Downloading another will replace it.	Hay un paquete de emojis instalado. Descargar otro lo reemplazará.
+Replace the installed emoji pack? A custom pack may be overwritten.	¿Reemplazar el paquete de emojis instalado? Se podría sobrescribir un paquete personalizado.
+Replace	Reemplazar
+Emoji pack download failed	Error al descargar el paquete de emojis
+Emoji pack downloaded. It applies after a restart.	Paquete de emojis descargado. Se aplica tras reiniciar.
  (device behind)	 (dispositivo atrasado)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d puntos de cobertura · %lu guardados en SD#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: esperando fijación GPS…#
@@ -2488,3 +2498,8 @@ Type a 6-digit code	Escribe un código de 6 cifras
 New random code each session	Un código aleatorio nuevo en cada sesión
 Too easy to guess. Pick another code.	Demasiado fácil de adivinar. Elige otro código.
 Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Apagado: un código aleatorio nuevo en cada sesión. Encendido: siempre el mismo código. El código viaja sin cifrar por tu Wi-Fi, así que quien lo vea o lo adivine puede conectarse. Los intentos fallidos bloquean cada vez más tiempo, hasta una hora.
+Spell suggestions	Sugerencias ortográficas
+Spell suggestions: on	Sugerencias ortográficas: activado
+Spell suggestions: off	Sugerencias ortográficas: desactivado
+English only. Tap a correction above the message box.	Solo en inglés. Toca una corrección sobre el cuadro de mensaje.
+English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Solo en inglés. Pulsa Arriba para ir a las correcciones, Izquierda o Derecha para elegir una y luego Enter.

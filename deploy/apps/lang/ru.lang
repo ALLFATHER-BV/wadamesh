@@ -4,6 +4,16 @@
 # ver: 34
 # name: Русский
 # base: ru
+Connect to Wi-Fi to download the emoji pack.	Подключитесь к Wi-Fi, чтобы загрузить пакет эмодзи.
+Download emoji pack	Загрузить пакет эмодзи
+Download the emoji pack over Wi-Fi. A microSD card is required.	Загрузите пакет эмодзи по Wi-Fi. Требуется карта microSD.
+Downloading emoji pack…	Загрузка пакета эмодзи…
+Emoji pack	Пакет эмодзи
+Emoji pack installed. Downloading another will replace it.	Пакет эмодзи установлен. Загрузка другого заменит его.
+Replace the installed emoji pack? A custom pack may be overwritten.	Заменить установленный пакет эмодзи? Пользовательский пакет может быть перезаписан.
+Replace	Заменить
+Emoji pack download failed	Не удалось загрузить пакет эмодзи
+Emoji pack downloaded. It applies after a restart.	Пакет эмодзи загружен. Применяется после перезапуска.
  (device behind)	 (устройство отстаёт)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d точек покрытия · %lu записано на SD#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: ожидание GPS…#
@@ -2488,3 +2498,8 @@ Type a 6-digit code	Введите 6-значный код
 New random code each session	Новый случайный код в каждой сессии
 Too easy to guess. Pick another code.	Слишком легко угадать. Выберите другой код.
 Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Выкл.: новый случайный код в каждой сессии. Вкл.: всегда один и тот же код. Код передаётся по вашему Wi-Fi без шифрования, поэтому любой, кто его там увидит или угадает, сможет подключиться. Неверные попытки блокируют каждый раз дольше, до часа.
+Spell suggestions	Подсказки правописания
+Spell suggestions: on	Подсказки правописания: вкл
+Spell suggestions: off	Подсказки правописания: выкл
+English only. Tap a correction above the message box.	Только английский. Нажмите на исправление над полем сообщения.
+English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Только английский. Нажмите Вверх, чтобы перейти к исправлениям, Влево или Вправо, чтобы выбрать, затем Enter.

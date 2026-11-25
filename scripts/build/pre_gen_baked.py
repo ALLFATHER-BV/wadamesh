@@ -74,3 +74,9 @@ wc_src = glob.glob(os.path.join(ROOT, "web", "console", "*")) + [WCG]
 if _stale(WCH, wc_src):
     print("web console: a page changed, regenerating WebConsoleAssets.h")
     subprocess.run([sys.executable, WCG], cwd=ROOT, check=True)
+
+SPELLH = os.path.join(ROOT, "src", "ui-touch", "spell_dict_en.h")
+SPELLG = os.path.join(HERE, "gen_spell_dict.py")
+if _stale(SPELLH, [os.path.join(ROOT, "dict", "en.txt"), SPELLG]):
+    print("spell: dict/en.txt or its generator changed, regenerating spell_dict_en.h")
+    subprocess.run([sys.executable, SPELLG], cwd=ROOT, check=True)

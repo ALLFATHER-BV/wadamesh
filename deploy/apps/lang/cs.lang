@@ -4,6 +4,16 @@
 # ver: 34
 # name: Čeština
 # base: cs
+Connect to Wi-Fi to download the emoji pack.	Připojte se k Wi-Fi a stáhněte balíček emoji.
+Download emoji pack	Stáhnout balíček emoji
+Download the emoji pack over Wi-Fi. A microSD card is required.	Stáhněte balíček emoji přes Wi-Fi. Je potřeba karta microSD.
+Downloading emoji pack…	Stahování balíčku emoji…
+Emoji pack	Balíček emoji
+Emoji pack installed. Downloading another will replace it.	Balíček emoji je nainstalován. Stažení jiného jej nahradí.
+Replace the installed emoji pack? A custom pack may be overwritten.	Nahradit nainstalovaný balíček emoji? Vlastní balíček může být přepsán.
+Replace	Nahradit
+Emoji pack download failed	Stažení balíčku emoji se nezdařilo
+Emoji pack downloaded. It applies after a restart.	Balíček emoji byl stažen. Použije se po restartu.
  (device behind)	 (zařízení za)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d bodů pokrytí · %lu uloženo na SD#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: čekání na GPS fix…#
@@ -2503,3 +2513,8 @@ Type a 6-digit code	Zadejte 6místný kód
 New random code each session	Pro každou relaci nový náhodný kód
 Too easy to guess. Pick another code.	Příliš snadno uhodnutelný. Zvolte jiný kód.
 Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Vypnuto: pro každou relaci nový náhodný kód. Zapnuto: vždy stejný kód. Kód jde přes vaši Wi-Fi nešifrovaně, takže kdo ho tam uvidí nebo uhodne, se může připojit. Chybné pokusy zamykají pokaždé déle, až na hodinu.
+Spell suggestions	Návrhy pravopisu
+Spell suggestions: on	Návrhy pravopisu: zapnuto
+Spell suggestions: off	Návrhy pravopisu: vypnuto
+English only. Tap a correction above the message box.	Jen angličtina. Klepněte na opravu nad polem zprávy.
+English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Jen angličtina. Stiskněte Nahoru pro opravy, Vlevo nebo Vpravo pro výběr a pak Enter.

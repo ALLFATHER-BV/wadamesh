@@ -4,6 +4,16 @@
 # ver: 34
 # name: Polski
 # base: pl
+Connect to Wi-Fi to download the emoji pack.	Połącz się z Wi-Fi, aby pobrać pakiet emoji.
+Download emoji pack	Pobierz pakiet emoji
+Download the emoji pack over Wi-Fi. A microSD card is required.	Pobierz pakiet emoji przez Wi-Fi. Wymagana jest karta microSD.
+Downloading emoji pack…	Pobieranie pakietu emoji…
+Emoji pack	Pakiet emoji
+Emoji pack installed. Downloading another will replace it.	Pakiet emoji jest zainstalowany. Pobranie innego zastąpi go.
+Replace the installed emoji pack? A custom pack may be overwritten.	Zastąpić zainstalowany pakiet emoji? Własny pakiet może zostać nadpisany.
+Replace	Zastąp
+Emoji pack download failed	Nie udało się pobrać pakietu emoji
+Emoji pack downloaded. It applies after a restart.	Pakiet emoji pobrany. Obowiązuje po ponownym uruchomieniu.
 # translators: tom73god (Discord)
  (device behind)	 (starsza wersja urządzenia)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d coverage pts · %lu logged to SD#
@@ -2500,3 +2510,8 @@ Type a 6-digit code	Wpisz 6-cyfrowy kod
 New random code each session	Nowy losowy kod w każdej sesji
 Too easy to guess. Pick another code.	Zbyt łatwy do odgadnięcia. Wybierz inny kod.
 Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Wył.: nowy losowy kod w każdej sesji. Wł.: zawsze ten sam kod. Kod przechodzi przez Twoje Wi-Fi bez szyfrowania, więc każdy, kto go tam zobaczy lub odgadnie, może się połączyć. Błędne próby blokują za każdym razem dłużej, maksymalnie godzinę.
+Spell suggestions	Podpowiedzi pisowni
+Spell suggestions: on	Podpowiedzi pisowni: włączone
+Spell suggestions: off	Podpowiedzi pisowni: wyłączone
+English only. Tap a correction above the message box.	Tylko angielski. Dotknij poprawki nad polem wiadomości.
+English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Tylko angielski. Naciśnij Góra, aby przejść do poprawek, Lewo lub Prawo, aby wybrać, potem Enter.
