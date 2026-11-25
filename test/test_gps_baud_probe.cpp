@@ -205,6 +205,41 @@ int main() {
     b.run(120000);
     assert(b.uart.starts_heard == heard);
   }
+  // ---- #778 on beta_103/106: a stopped engine that goes on sending empty sentences ----
+  // The stream never goes quiet, so silence cannot reveal the lost start; the starts that
+  // follow begin() whatever arrives must bring the engine back.
+  {
+    resetNvs();
+    nvs.chosen = 38400;
+    Board b(38400, 38400);
+    b.uart.stopped_talks = true;
+    b.run(5000);
+    b.gps->stop();
+    assert(b.uart.stopped);
+    b.uart.drop_starts = 1;                    // the start in begin() is lost
+    b.gps->begin();
+    b.run(10000);
+    assert(!b.uart.stopped);
+    assert(b.gps->isValid());
+  }
+  // ---- the T-Deck Plus rests in software standby: no engine stop, back on begin() ----
+  {
+    resetNvs();
+    nvs.chosen = 38400;
+    Board b(38400, 38400);
+    b.gps->setUbxStandby(true);
+    b.uart.stopped_talks = true;
+    b.run(5000);
+    b.gps->stop();
+    assert(b.uart.standby && !b.uart.stopped && b.uart.stops_heard == 0);
+    const uint32_t n = b.gps->validSentences();
+    b.run(60000);
+    assert(b.gps->validSentences() == n);      // resting: nothing on the line
+    b.gps->begin();
+    b.run(10000);
+    assert(!b.uart.standby && !b.uart.stopped);
+    assert(b.gps->validSentences() > n && b.gps->isValid());
+  }
   // ---- a receiver that sends on for a moment after the start, then stops: still recovered ----
   {
     resetNvs();

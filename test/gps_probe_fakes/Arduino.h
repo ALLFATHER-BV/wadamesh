@@ -47,6 +47,9 @@ public:
   bool stopped = false;            // a UBX-CFG-RST GNSS stop was heard: the receiver is silent
   int drop_starts = 0;             // this many starts are lost (too soon after a stop)
   int starts_heard = 0;
+  bool stopped_talks = false;      // a stopped engine goes on sending empty, fixless sentences
+  bool standby = false;            // UBX-RXM-PMREQ heard: silent until a byte wakes it
+  int stops_heard = 0;
   std::vector<uint8_t> rx;         // the RX ring
   size_t rx_head = 0;
   uint32_t last_ms = 0;
@@ -61,7 +64,7 @@ public:
   // Fill the ring for the time that passed since the last look.
   void pump() {
     const uint32_t now = millis();
-    if (!open || !true_baud || stopped) { last_ms = now; return; }
+    if (!open || !true_baud || standby || (stopped && !stopped_talks)) { last_ms = now; return; }
     carry += (double)(now - last_ms) * (double)true_baud / 10000.0;   // 10 bits a byte
     last_ms = now;
     while (carry >= 1.0) {
@@ -79,7 +82,12 @@ public:
       "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n",
       "$GPGSV,1,1,00*79\r\n",
     };
-    const char* s = k[sentence_idx];
+    static const char* const k_nofix[] = {
+      "$GPRMC,,V,,,,,,,,,,N*53\r\n",
+      "$GPGGA,,,,,,0,00,99.99,,,,,,*48\r\n",
+      "$GPGSV,1,1,00*79\r\n",
+    };
+    const char* s = stopped ? k_nofix[sentence_idx] : k[sentence_idx];
     const uint8_t c = (uint8_t)s[sentence_pos++];
     if (!s[sentence_pos]) { sentence_pos = 0; sentence_idx = (sentence_idx + 1) % 3; }
     return c;
@@ -94,12 +102,17 @@ public:
   }
   size_t write(uint8_t b) override {
     sent.push_back((char)b);
+    // Any byte at the line wakes a receiver in standby (it is not heard as anything else).
+    if (standby && open) { pump(); standby = false; return 1; }
+    static const char kPmreq[] = "\xB5\x62\x02\x41";
+    if (open && baud == true_baud && sent.size() >= 24 &&
+        memcmp(sent.data() + sent.size() - 24, kPmreq, 4) == 0) { pump(); standby = true; }
     // The receiver only hears a UBX-CFG-RST sent at its own speed.
     static const char kHead[] = "\xB5\x62\x06\x04\x04\x00\x00\x00";
     if (open && baud == true_baud && sent.size() >= 12 &&
         memcmp(sent.data() + sent.size() - 12, kHead, 8) == 0) {
       const uint8_t mode = (uint8_t)sent[sent.size() - 4];
-      if (mode == 0x08) { pump(); stopped = true; }
+      if (mode == 0x08) { pump(); stopped = true; ++stops_heard; }
       if (mode == 0x09) {
         if (drop_starts > 0) --drop_starts;
         else { pump(); stopped = false; ++starts_heard; }

@@ -46,6 +46,13 @@ EnvironmentSensorManager sensors(gps);
 
 bool radio_init() {
   fallback_clock.begin();
+  // The T-Deck Plus receiver (u-blox MIA-M10Q) rests in software standby, as on the
+  // T-LoRa Pager, instead of with its GNSS engine stopped. A stopped engine can go on
+  // sending empty sentences, so a start lost after the boot-time stop left it "talking at
+  // 38400" without ever getting a fix (#778). Standby is silent and wakes on any byte we
+  // send, which the provider keeps doing until sentences flow. Receivers that do not
+  // speak UBX ignore it. Runs before sensors.begin(), whose GPS detect ends in a stop().
+  gps.setUbxStandby(true);
 
   // I2C bus recovery: if a peripheral is mid-byte and holding SDA low, clock SCL
   // up to 9 times so it can finish, then leave the lines idle-high.
