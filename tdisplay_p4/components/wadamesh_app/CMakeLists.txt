@@ -29,3 +29,8 @@ idf_component_register(
 # Our own code, but huge + LVGL-heavy — keep the first port building; don't -Werror on warnings.
 target_compile_options(${COMPONENT_LIB} PRIVATE -w
   -include "${REPO}/variants/tdisplay_p4/tdisplay_p4_compat.h")   # adcAttachPin() shim (arduino 3.x dropped it)
+
+# UITask.cpp (the UI logic, ~87k lines) at -Os: at the project's -O2 the T-Display P4
+# image outgrew its 4 MB app slot in beta_107 (about 4.29 MB). -Os on this one file
+# saves about 240 KB. LVGL, the display driver and the rest stay at -O2 (#167).
+set_source_files_properties("${APP}/ui-touch/UITask.cpp" PROPERTIES COMPILE_OPTIONS "-Os")
