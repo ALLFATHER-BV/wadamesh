@@ -451,6 +451,10 @@ void    touchPrefsSyncBootUiRotation();
  *  default Li-ion full point). Lets custom batteries / builds read 100%. */
 uint16_t touchPrefsGetBattFullMv();
 bool     touchPrefsSetBattFullMv(uint16_t mv);
+/** The voltage the battery curve calls 0%, as a step: 0..3 = 3.3 / 3.4 / 3.5 / 3.6 V.
+ *  Standalone key, default 0 (3.3 V). For packs that shut down above 3.3 V. */
+uint8_t  touchPrefsGetBattEmptyStep();
+void     touchPrefsSetBattEmptyStep(uint8_t step);
 
 /** Saved Wi-Fi profile slots. The "active" credentials still live in the
  *  meshcomod NVS namespace (WifiRuntimeStore.cpp) and are what
@@ -668,6 +672,12 @@ void    touchPrefsSetScreensaverAlwaysOnPower(bool on);
 // Keep north up (#706): the Constellation does not turn. Standalone key, default off.
 bool    touchPrefsGetScreensaverNorthUp();
 void    touchPrefsSetScreensaverNorthUp(bool on);
+// The Constellation's range (0 = Auto, fits the farthest node; 1..3 = 5 / 20 / 50 in
+// the distance unit) and "Favorites only". Standalone keys, default Auto / off.
+uint8_t touchPrefsGetScreensaverRange();
+void    touchPrefsSetScreensaverRange(uint8_t idx);
+bool    touchPrefsGetScreensaverFavOnly();
+void    touchPrefsSetScreensaverFavOnly(bool on);
 bool    touchPrefsGetLockPreviews();           // message text on the lock screen's unread cards (default true)
 void    touchPrefsSetLockPreviews(bool on);
 bool    touchPrefsGetGlanceWhenLocked();       // "at a glance" also fires while manually/idle locked, not just unlocked+dimmed (default false)

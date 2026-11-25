@@ -752,7 +752,10 @@ public:
   // / hop count / length + signal, so the Monitor page can show a live "what am
   // I hearing" feed without a core hook. Newest-first via uiRxLogGet (i=0 = most
   // recent). Board-independent — populated on every board, not just touch.
-  static const int UI_RXLOG_PATH_MAX = 16;
+  // 64 bytes keeps a whole 32-hop path at 2-byte hashes (21 at 3 bytes); 16 cut
+  // most 2- and 3-byte paths short. The ring is part of the_mesh, which main.cpp
+  // places in PSRAM (makeTheMesh), so the larger records cost no internal DRAM.
+  static const int UI_RXLOG_PATH_MAX = 64;
   struct UiRxRec {
     uint32_t ms;        // millis() at RX
     int8_t   rssi;      // dBm
@@ -776,6 +779,11 @@ public:
     // direct frame's path is the route still ahead of it, so it is not kept.
     uint8_t  path_bytes;
     uint8_t  path_hash_sz;
+    // The repeater our radio actually heard: the LAST hash of a flood's path
+    // (kept even when `path` is capped), path_hash_sz bytes. last_hop_sz 0 =
+    // none (a direct frame, or a flood heard straight from its origin).
+    uint8_t  last_hop_sz;
+    uint8_t  last_hop[4];
     uint8_t  path[UI_RXLOG_PATH_MAX];
   };
   static const int UI_RXLOG_MAX = 16;
@@ -800,6 +808,10 @@ public:
     r.org_kind = org ? org_kind : 0;
     if (r.org_kind) memcpy(r.org, org, 4); else memset(r.org, 0, 4);
     if (!path || path_hash_sz == 0 || path_hash_sz > 4) path_bytes = 0;
+    // The last whole hop of the FULL path, before the cap below trims it.
+    r.last_hop_sz = (path_bytes >= path_hash_sz) ? path_hash_sz : 0;
+    memset(r.last_hop, 0, sizeof r.last_hop);
+    if (r.last_hop_sz) memcpy(r.last_hop, path + (path_bytes / path_hash_sz - 1) * path_hash_sz, path_hash_sz);
     if (path_bytes > UI_RXLOG_PATH_MAX)
       path_bytes = (uint8_t)(UI_RXLOG_PATH_MAX / path_hash_sz * path_hash_sz);
     r.path_bytes = path_bytes;

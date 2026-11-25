@@ -323,6 +323,12 @@ public:
 
   void sendSentence(const char* sentence) override { nmea.sendSentence(*_gps_serial, sentence); }
 
+  // Every checksummed sentence, handed to this hook as it arrives (wada.gps.nmea,
+  // #896). Null = off, which is the default: no copy is made unless a Lua app with
+  // the hardware permission asked for them. Called from loop(), the loop task.
+  typedef void (*SentenceTap)(const char* sentence);
+  static SentenceTap& sentenceTap() { static SentenceTap tap = nullptr; return tap; }
+
   // For the GPS page: is the receiver talking at all? Satellites at 0 with sentences
   // arriving is a receiver still searching; no sentences is a silent or mis-clocked one.
   uint32_t validSentences() const { return _valid_sentences; }
@@ -365,6 +371,7 @@ public:
           _last_valid_ms = millis();
           if (!_last_valid_ms) _last_valid_ms = 1;
           noteValidSentence();
+          if (SentenceTap tap = sentenceTap()) tap(sentence);
         }
       }
     }

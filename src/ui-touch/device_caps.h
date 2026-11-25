@@ -859,6 +859,18 @@
   #endif
 #endif
 
+// wada.i2c (scan, read, write on the board's main I2C bus) and wada.gps.nmea (the
+// receiver's raw sentences), #896. Behind their own app permission. Arduino Wire
+// builds only (not the ESP-IDF P4 / Tanmatsu builds), not on the Pager (app slot).
+#ifndef CAP_LUA_HW
+  #if CAP_LUA_SDK_EXT && defined(ESP32) && !defined(TLORA_PAGER) && !defined(HAS_TANMATSU) && \
+      !defined(HAS_TDISPLAY_P4) && !defined(HAS_CROWPANEL_P4_101)
+    #define CAP_LUA_HW 1
+  #else
+    #define CAP_LUA_HW 0
+  #endif
+#endif
+
 // wada.ui.image: an app draws a PNG / JPEG / BMP from one of its own files. Needs
 // wada.fs (the extended SDK) and the firmware's image decoders, which only ESP32
 // builds carry. Not on the T-LoRa Pager: its app slot has no room left for it.
@@ -994,6 +1006,28 @@
     #define CAP_SSAVER_NORTH_LOCK 1
   #else
     #define CAP_SSAVER_NORTH_LOCK 0
+  #endif
+#endif
+
+// Settings > Display > Screensaver > Range and "Favorites only": how far the
+// Constellation reaches, and whether it shows only favourite nodes. Off the Pager
+// (app slot).
+#ifndef CAP_SSAVER_FILTERS
+  #if CAP_SCREENSAVER && !defined(TLORA_PAGER)
+    #define CAP_SSAVER_FILTERS 1
+  #else
+    #define CAP_SSAVER_FILTERS 0
+  #endif
+#endif
+
+// Settings > Battery > "Empty at": the voltage the battery curve calls 0% (3.3 to
+// 3.6 V), for packs that brown out early. Not where a fuel gauge gives the charge
+// (the Pager, the T-Display P4).
+#ifndef CAP_BATT_EMPTY_PICK
+  #if CAP_BATTERY && !defined(TLORA_PAGER) && !defined(HAS_TDISPLAY_P4)
+    #define CAP_BATT_EMPTY_PICK 1
+  #else
+    #define CAP_BATT_EMPTY_PICK 0
   #endif
 #endif
 

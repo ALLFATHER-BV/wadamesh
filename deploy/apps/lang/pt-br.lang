@@ -2533,3 +2533,10 @@ This book is too large for the app's memory. Try a .txt copy of it, or split it 
 
 # Contacts shared in chat (#887)
 This is your own node	Este é o seu próprio nó
+Range	Alcance
+Nodes farther away are left out. Auto fits the farthest node.	Nós mais distantes ficam de fora. Auto se ajusta ao nó mais distante.
+Shows only the nodes you marked as favorite.	Mostra apenas os nós marcados como favoritos.
+Empty at	Vazia em
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	A tensão que marca 0%. Se o aparelho desliga enquanto ainda mostra carga, escolha a tensão em que ele para.
+Use the I2C bus and raw GPS data	Usar o barramento I2C e os dados brutos do GPS
+"%s" wants to use the hardware: read and write devices on the I2C bus, and read the GPS receiver's raw data.\n\nA wrong write can change how a connected sensor behaves until it is powered off. The device's own keyboard, touch and power chips stay off limits.	"%s" quer usar o hardware: ler e gravar dispositivos no barramento I2C e ler os dados brutos do receptor GPS.\n\nUma gravação errada pode mudar o comportamento de um sensor conectado até que ele seja desligado. O teclado, a tela de toque e os chips de energia do aparelho ficam fora de alcance.

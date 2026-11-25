@@ -2534,3 +2534,10 @@ This book is too large for the app's memory. Try a .txt copy of it, or split it 
 
 # Contacts shared in chat (#887)
 This is your own node	Acesta este propriul tău nod
+Range	Rază
+Nodes farther away are left out. Auto fits the farthest node.	Nodurile mai îndepărtate sunt omise. Auto se potrivește celui mai îndepărtat nod.
+Shows only the nodes you marked as favorite.	Arată doar nodurile marcate ca favorite.
+Empty at	Goală la
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	Tensiunea care înseamnă 0%. Dacă dispozitivul se oprește cât încă arată încărcare, alege tensiunea la care se oprește.
+Use the I2C bus and raw GPS data	Folosirea magistralei I2C și a datelor GPS brute
+"%s" wants to use the hardware: read and write devices on the I2C bus, and read the GPS receiver's raw data.\n\nA wrong write can change how a connected sensor behaves until it is powered off. The device's own keyboard, touch and power chips stay off limits.	"%s" vrea să folosească hardware-ul: să citească și să scrie dispozitive pe magistrala I2C și să citească datele brute ale receptorului GPS.\n\nO scriere greșită poate schimba comportamentul unui senzor conectat până când este oprit. Tastatura, ecranul tactil și cipurile de alimentare ale dispozitivului rămân inaccesibile.

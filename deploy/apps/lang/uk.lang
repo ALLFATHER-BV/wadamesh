@@ -2533,3 +2533,10 @@ This book is too large for the app's memory. Try a .txt copy of it, or split it 
 
 # Contacts shared in chat (#887)
 This is your own node	Це ваш власний вузол
+Range	Радіус
+Nodes farther away are left out. Auto fits the farthest node.	Дальші вузли не показуються. Авто підлаштовується під найдальший вузол.
+Shows only the nodes you marked as favorite.	Показує лише вузли, позначені як обрані.
+Empty at	Порожня при
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	Напруга, що відповідає 0%. Якщо пристрій вимикається, поки ще показує заряд, виберіть напругу, за якої він вимикається.
+Use the I2C bus and raw GPS data	Доступ до шини I2C і сирих даних GPS
+"%s" wants to use the hardware: read and write devices on the I2C bus, and read the GPS receiver's raw data.\n\nA wrong write can change how a connected sensor behaves until it is powered off. The device's own keyboard, touch and power chips stay off limits.	"%s" хоче використовувати обладнання: читати й записувати пристрої на шині I2C і читати сирі дані GPS-приймача.\n\nХибний запис може змінити роботу підключеного датчика, доки його не вимкнуть. Клавіатура, сенсорний екран і мікросхеми живлення пристрою лишаються недоступними.

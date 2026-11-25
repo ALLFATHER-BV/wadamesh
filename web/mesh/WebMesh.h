@@ -238,7 +238,7 @@ public:
   void     discoverClear() {}
 
   // ---- RF monitor ring ------------------------------------------------------------------
-  static const int UI_RXLOG_PATH_MAX = 16;
+  static const int UI_RXLOG_PATH_MAX = 64;   // as MyMesh.h
   struct UiRxRec {
     uint32_t ms;
     int8_t   rssi;
@@ -251,6 +251,8 @@ public:
     uint8_t  org[4];
     uint8_t  path_bytes;
     uint8_t  path_hash_sz;
+    uint8_t  last_hop_sz;   // the repeater heard: the flood path's last hash (0 = none)
+    uint8_t  last_hop[4];
     uint8_t  path[UI_RXLOG_PATH_MAX];
   };
   static const int UI_RXLOG_MAX = 16;

@@ -2490,6 +2490,45 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
     }
   }
 #endif
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  // Stock companion firmware pushes EVERY frame's RX log to the app, and phone apps
+  // (MeshCore One) take a received message's path from it: without it they show
+  // "flood". The full stream floods BLE on a busy mesh (#46/#54), so BLE keeps its
+  // filter, but the first reception of each message this node can read now passes:
+  // a DM addressed to us, or a channel post on one of our channels. Echoes of that
+  // message, and everything else, still stay off BLE unless the app opts into all
+  // of it ("ble.rxlog:1"). USB, TCP and WebSocket clients get every frame as before.
+  if (len > 0 && _serial->isConnected() && !MultiTransportCompanionInterface::bleRxLogFirehose()) {
+    const uint8_t rt2 = raw[0] & 0x03;
+    const bool    xp2 = (rt2 == ROUTE_TYPE_TRANSPORT_FLOOD || rt2 == ROUTE_TYPE_TRANSPORT_DIRECT);
+    const int     ps2 = 1 + (xp2 ? 4 : 0);
+    if (ps2 < len) {
+      const uint8_t plb2 = raw[ps2];
+      const int     pay  = ps2 + 1 + (int)(plb2 & 0x3F) * (int)(((plb2 >> 6) & 0x03) + 1);
+      const uint8_t pt2  = (raw[0] >> 2) & 0x0F;
+      bool ours = false;
+      if (pt2 == PAYLOAD_TYPE_TXT_MSG && pay + 2 <= len) {
+        ours = raw[pay] == self_id.pub_key[0];                 // destination hash = us
+      } else if (pt2 == PAYLOAD_TYPE_GRP_TXT && pay + 1 <= len) {
+        mesh::GroupChannel ch[1];
+        ours = searchChannelsByHash(&raw[pay], ch, 1) > 0;   // one of our channels
+      }
+      if (ours) {
+        // Repeaters re-flood the same payload with a longer path: pass only the first.
+        static uint32_t s_ble_msg_fp[8] = {0};
+        static uint8_t  s_ble_msg_fp_next = 0;
+        const uint32_t fp = fnv1a32(raw + pay, len - pay);
+        bool seen = false;
+        for (uint32_t f : s_ble_msg_fp) if (f == fp) { seen = true; break; }
+        if (!seen) {
+          s_ble_msg_fp[s_ble_msg_fp_next] = fp;
+          s_ble_msg_fp_next = (uint8_t)((s_ble_msg_fp_next + 1) % 8);
+          MultiTransportCompanionInterface::bleAllowNextRxLog();
+        }
+      }
+    }
+  }
+#endif
   if (len + 3 <= MAX_FRAME_SIZE) {
     int i = 0;
     out_frame[i++] = PUSH_CODE_LOG_RX_DATA;

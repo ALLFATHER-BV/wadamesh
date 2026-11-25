@@ -2533,3 +2533,10 @@ This book is too large for the app's memory. Try a .txt copy of it, or split it 
 
 # Contacts shared in chat (#887)
 This is your own node	Das ist dein eigener Knoten
+Range	Reichweite
+Nodes farther away are left out. Auto fits the farthest node.	Weiter entfernte Knoten werden ausgelassen. Auto passt sich dem entferntesten Knoten an.
+Shows only the nodes you marked as favorite.	Zeigt nur die Knoten, die du als Favorit markiert hast.
+Empty at	Leer bei
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	Die Spannung, die 0 % anzeigt. Schaltet sich das Gerät ab, obwohl es noch Ladung zeigt, wähle die Spannung, bei der es aufhört.
+Use the I2C bus and raw GPS data	I2C-Bus und GPS-Rohdaten nutzen
+"%s" wants to use the hardware: read and write devices on the I2C bus, and read the GPS receiver's raw data.\n\nA wrong write can change how a connected sensor behaves until it is powered off. The device's own keyboard, touch and power chips stay off limits.	"%s" möchte die Hardware nutzen: Geräte am I2C-Bus lesen und beschreiben und die Rohdaten des GPS-Empfängers lesen.\n\nEin falscher Schreibzugriff kann das Verhalten eines angeschlossenen Sensors ändern, bis er ausgeschaltet wird. Tastatur, Touch und Stromversorgungschips des Geräts bleiben gesperrt.

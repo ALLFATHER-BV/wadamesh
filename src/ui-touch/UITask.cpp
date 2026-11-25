@@ -310,6 +310,10 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     // fires. TouchPrefsStore.h stated this invariant in prose; prose is what let it rot.
     static_assert(TOUCH_IGNORED_NAME_LEN >= UITask::MAX_SENDER_NAME + 1,
                   "block-list slot must hold a full sender name, or blocking silently stops working");
+    #if CAP_LUA_HW
+      #include <Wire.h>                                 // wada.i2c: the board's main bus
+      #include "../helpers/WadaNmeaLocationProvider.h"  // wada.gps.nmea: its sentence hook
+    #endif
     #include "../helpers/esp32/WebMirror.h"   // web UI mirror (framebuffer + pointer bridge)
     #include "../helpers/esp32/WebFileTransferConfig.h"
     #if WADA_WEB_FILE_TRANSFER
@@ -9166,6 +9170,19 @@ static void ssaverStart(uint32_t now, bool preview);
 #if CAP_SSAVER_NORTH_LOCK
 static void ssaverSetNorthLock(bool on);
 #endif
+#if CAP_SSAVER_FILTERS
+static void ssaverSetRange(uint8_t idx);
+static void ssaverSetFavOnly(bool on);
+// The range steps, in the distance unit the user picked (0 = Auto).
+static constexpr uint8_t kSsaverRangeSteps[4] = { 0, 5, 20, 50 };
+static bool ssaverMiles() {
+#if defined(ESP32)
+  return touchPrefsGetUseMiles();
+#else
+  return false;
+#endif
+}
+#endif
 #endif
 
 #if !defined(HAS_TANMATSU)
@@ -15959,7 +15976,7 @@ static lv_obj_t* settingsCardIn(lv_obj_t* parent, const char* title) {
 }
 
 // Width of a settings modal's "Close" button. The Pager's 16 px text cut it to
-// "Cl…" at 58 px; the Discovered header lines its own buttons up against it.
+// "Cl…" at 58 px. (The Discovered header uses the compact X instead.)
 static inline lv_coord_t settingsModalCloseW() {
 #if defined(TLORA_PAGER)
   return 72;
@@ -16006,8 +16023,11 @@ static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind) 
   // The read-only info pages (System Information, Memory detail) close with a
   // compact X: the whole page is text to scroll through, and "Close" read as one
   // more item in it.
+  // Discovered too: its header carries Purge / Sort / Settings buttons, and the
+  // word "Close" was clipped to "Cl.." at the normal font size.
   const bool info_page = (kind == SettingsModalKind::SystemInfo ||
-                          kind == SettingsModalKind::MemoryInfo);
+                          kind == SettingsModalKind::MemoryInfo ||
+                          kind == SettingsModalKind::Discovered);
   lv_obj_t* close_btn = lv_btn_create(header);
   lv_obj_set_size(close_btn, info_page ? SC(32) : settingsModalCloseW(), SC(32));
   lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, -6, 0);
@@ -16017,6 +16037,7 @@ static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind) 
   useChainedFont(close_lbl);
   if (info_page) {
     lv_label_set_text(close_lbl, LV_SYMBOL_CLOSE);
+    tanCloseRed(close_lbl);
   } else {
 #if defined(HAS_TANMATSU)
   { char _cb[40]; snprintf(_cb, sizeof _cb, LV_SYMBOL_CLOSE "  %s", TR("Close")); lv_label_set_text(close_lbl, _cb);
@@ -16761,8 +16782,8 @@ static void openDiscoveredSettingsSheetCb(lv_event_t* e) {
   closeDiscoveredSettings();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
-  // Full-screen backdrop ON TOP of the Discovered modal — its 58 px Close button
-  // is covered, so the sheet must be dismissed (tap outside) before the modal.
+  // Full-screen backdrop ON TOP of the Discovered modal: its X is covered, so the
+  // sheet is dismissed (its own X, or a tap outside) before the modal.
   s_disc_settings_root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_disc_settings_root);
   lv_obj_set_size(s_disc_settings_root, sw, sh - STATUSBAR_H);
@@ -16800,10 +16821,14 @@ static void openDiscoveredSettingsSheetCb(lv_event_t* e) {
   lv_obj_set_style_pad_all(card, 12, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
+  addCloseXBadge(card, discSettingsDismissCb);   // same path as a tap outside: applies the hop limit
+
   lv_obj_t* title = lv_label_create(card);
   lv_label_set_text(title, TR("Discovered settings"));
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
+  lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(title, card_w - 24 - 30);   // keep a long translation clear of the X
   lv_obj_set_pos(title, 0, 0);
 
   lv_obj_t* lbl = lv_label_create(card);
@@ -16924,12 +16949,10 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     if (header) {
       lv_obj_t* cog = lv_btn_create(header);
       lv_obj_set_size(cog, SC(32), SC(32));
-#if defined(TLORA_PAGER)
-      const lv_coord_t shift = settingsModalCloseW() - 58;   // the wider Close moves the row left
-#else
-      const lv_coord_t shift = 0;
-#endif
-      lv_obj_align(cog, LV_ALIGN_RIGHT_MID, -68 - shift, 0);   // just left of the 58 px "Close" (at -6)
+      // The header closes with the compact SC(32) X at -6; the row steps left
+      // from it one SC(32) button plus a 6 px gap at a time.
+      const lv_coord_t step = SC(32) + 6;
+      lv_obj_align(cog, LV_ALIGN_RIGHT_MID, -6 - step, 0);   // just left of the X
       styleButton(cog);
       lv_obj_add_event_cb(cog, openDiscoveredSettingsSheetCb, LV_EVENT_CLICKED, nullptr);
       lv_obj_t* cl = lv_label_create(cog);
@@ -16941,7 +16964,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
       // each asc/desc). Always present so the control is visible even on an empty list.
       lv_obj_t* srt = lv_btn_create(header);
       lv_obj_set_size(srt, SC(32), SC(32));
-      lv_obj_align(srt, LV_ALIGN_RIGHT_MID, -106 - shift, 0);   // left of the cog
+      lv_obj_align(srt, LV_ALIGN_RIGHT_MID, -6 - 2 * step, 0);   // left of the cog
       styleButton(srt);
       lv_obj_add_event_cb(srt, openDiscSortSheetCb, LV_EVENT_CLICKED, nullptr);
       lv_obj_t* srtl = lv_label_create(srt);
@@ -16952,7 +16975,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
       if (n > 0) {
         lv_obj_t* pb = lv_btn_create(header);
         lv_obj_set_size(pb, SC(32), SC(32));
-        lv_obj_align(pb, LV_ALIGN_RIGHT_MID, -144 - shift, 0);   // left of the sort
+        lv_obj_align(pb, LV_ALIGN_RIGHT_MID, -6 - 3 * step, 0);   // left of the sort
         styleButton(pb);
         lv_obj_set_style_bg_color(pb, lv_color_hex(themeRole(0x7A2A2A, COLOR_STATUS_DANGER)), LV_PART_MAIN);
         lv_obj_set_style_text_color(pb, lv_color_hex(COLOR_ON_STATUS_DANGER), LV_PART_MAIN);
@@ -19501,6 +19524,19 @@ static void ssaverNorthToggleCb(lv_event_t* e) {
   ssaverSetNorthLock(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
 }
 #endif
+#if CAP_SSAVER_FILTERS
+static void ssaverRangePickCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int i = setChoiceIndex(e);
+  if (i < 0 || i > 3) return;
+  ssaverSetRange((uint8_t)i);
+  setChoicePick(lv_obj_get_parent(lv_event_get_current_target(e)), i);
+}
+static void ssaverFavToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  ssaverSetFavOnly(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+#endif
 // The battery time slider: 0..12 steps of 5 s.
 static void ssaverBattFormat(unsigned secs, char* out, size_t cap) {
   if (secs == 0)       snprintf(out, cap, "%s", TR("Off"));
@@ -20308,6 +20344,8 @@ static void openSoundPickerCb(lv_event_t* e);      // defined with the chooser, 
 #endif
 
 static void calibrateBatteryCb(lv_event_t* e);   // defined with the battery helpers below
+static uint16_t batteryEmptyMv();                 // ...and these two ("Empty at")
+static void batteryEmptySet(uint8_t step);
 // Keyboards whose backlight takes a level, not just on/off: the T-Deck's C3 keyboard
 // and the ThinkNode M9's controller (duty register 0x02, #664).
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
@@ -20598,6 +20636,27 @@ static void buildDisplayPage() {
     s_ssaver_rows.north = setSwitchRow(c, "Keep north up",
                                        "The mesh stays put instead of slowly turning around you.",
                                        ss_north, ssaverNorthToggleCb);
+#endif
+#if CAP_SSAVER_FILTERS
+    {
+      const char* unit = ssaverMiles() ? "mi" : "km";
+      char r1[12], r2[12], r3[12];
+      snprintf(r1, sizeof r1, "%u %s", kSsaverRangeSteps[1], unit);
+      snprintf(r2, sizeof r2, "%u %s", kSsaverRangeSteps[2], unit);
+      snprintf(r3, sizeof r3, "%u %s", kSsaverRangeSteps[3], unit);
+      const char* ranges[] = { TR("Auto"), r1, r2, r3 };
+#if defined(ESP32)
+      const uint8_t ss_rng = touchPrefsGetScreensaverRange();
+      const bool    ss_fav = touchPrefsGetScreensaverFavOnly();
+#else
+      const uint8_t ss_rng = 0;
+      const bool    ss_fav = false;
+#endif
+      setChoiceRow(c, "Range", "Nodes farther away are left out. Auto fits the farthest node.",
+                   ranges, 4, ss_rng, ssaverRangePickCb);
+      setSwitchRow(c, "Favorites only", "Shows only the nodes you marked as favorite.",
+                   ss_fav, ssaverFavToggleCb);
+    }
 #endif
     s_ssaver_rows.preview = setButton(c, UI_ICON_EYE, "Preview screensaver", ssaverPreviewCb);
     ssaverRowsEnable(ss_on);
@@ -21378,6 +21437,19 @@ static void buildBatteryPage() {
     lv_obj_add_event_cb(b, calibrateBatteryCb, LV_EVENT_SHORT_CLICKED, nullptr);
     lv_obj_add_event_cb(b, calibrateBatteryCb, LV_EVENT_LONG_PRESSED, nullptr);
     setNote(c, "Tap with a full battery to call its voltage 100%. Hold to go back to the default.");
+#if CAP_BATT_EMPTY_PICK
+    {
+      static const char* const empties[] = { "3.3 V", "3.4 V", "3.5 V", "3.6 V" };
+      setChoiceRow(c, "Empty at", "The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.",
+                   empties, 4, (int)(batteryEmptyMv() - 3300) / 100, +[](lv_event_t* e) {
+                     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+                     const int i = setChoiceIndex(e);
+                     if (i < 0 || i > 3) return;
+                     batteryEmptySet((uint8_t)i);
+                     setChoicePick(lv_obj_get_parent(lv_event_get_current_target(e)), i);
+                   });
+    }
+#endif
 #if defined(HAS_THINKNODE_M9)
     setSwitchRow(c, "Low battery warning", "Warns at 20%, again at 10%, and enters deep sleep at 3% so the battery is never run flat.",
                  touchPrefsGetLowBattWarn(), +[](lv_event_t* e) {
@@ -27034,6 +27106,23 @@ static uint16_t batteryFullMv() {
   if (s_batt_full_mv > kBattFullMaxMv) return 4200;
   return s_batt_full_mv ? s_batt_full_mv : 4200;
 }
+// The voltage that reads 0%: 3.3 V, or up to 3.6 V for a pack that shuts down before
+// 3.3 V (a T-Deck Pro reported 30% at its 3.6 V cut-off). Cached like the full point.
+static uint8_t s_batt_empty_step = 0xFF;   // 0xFF = not loaded
+static uint16_t batteryEmptyMv() {
+#if CAP_BATT_EMPTY_PICK && defined(ESP32)
+  if (s_batt_empty_step == 0xFF) s_batt_empty_step = touchPrefsGetBattEmptyStep();
+  return (uint16_t)(3300 + 100 * (s_batt_empty_step & 3));
+#else
+  return 3300;
+#endif
+}
+static void batteryEmptySet(uint8_t step) {
+  s_batt_empty_step = (uint8_t)(step & 3);
+#if CAP_BATT_EMPTY_PICK && defined(ESP32)
+  touchPrefsSetBattEmptyStep(s_batt_empty_step);
+#endif
+}
 
 #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
 // (R8 & M9: the divider is permanently connected, so EMA smoothing filters ADC2/Wi-Fi jitter.)
@@ -27223,14 +27312,16 @@ static int batteryPercentFromMv(uint16_t mv) {
     if (soc >= 0) return soc;
   }
 #endif
-  // Li-ion curve: 3.30 V empty, FULL = the calibrated full (default 4.20 V).
-  // While charging the rail reads above full (charger-driven) — cap at 100
-  // rather than show a bogus number; the real cell % isn't observable here.
+  // Li-ion curve: EMPTY = 3.30 V or the picked "Empty at", FULL = the calibrated
+  // full (default 4.20 V). While charging the rail reads above full (charger-driven)
+  // — cap at 100 rather than show a bogus number; the real cell % isn't observable here.
   if (mv == 0) return -1;
   const uint16_t full = batteryFullMv();
+  uint16_t empty = batteryEmptyMv();
+  if (full < empty + 300) empty = 3300;   // a low calibrated full: keep a usable span
   if (mv >= full)  return 100;
-  if (mv <= 3300)  return 0;
-  return (int)((mv - 3300) * 100 / (full - 3300));
+  if (mv <= empty) return 0;
+  return (int)((mv - empty) * 100 / (full - empty));
 }
 
 // Calibrate-battery action (Device settings). SHORT_CLICKED captures the current
@@ -27712,7 +27803,7 @@ static void battChartTickCb(lv_event_t* e) {
 // Estimate remaining battery life from the logged samples. Charging samples
 // (mv > calibrated full) are ignored, and only the discharge segment AFTER the
 // most recent charge is used. A least-squares slope over that segment gives
-// mV/s; time-to-empty targets 3300 mV (the Li-ion empty point used by the % curve).
+// mV/s; time-to-empty targets the empty point the % curve uses (3.3 V, or "Empty at").
 static void batteryEstimateText(const uint32_t* eps, const uint16_t* mvs, int n,
                                 int full_mv, char* out, size_t cap) {
   int start = 0;
@@ -27740,7 +27831,7 @@ static void batteryEstimateText(const uint32_t* eps, const uint16_t* mvs, int n,
   if (denom <= 0) { snprintf(out, cap, "Battery life: \xe2\x80\x94"); return; }
   const double slope = ((double)m * sxy - sx * sy) / denom;   // mV/s (negative = discharging)
   if (slope >= -1e-7) { snprintf(out, cap, "Battery life: charging / steady"); return; }
-  double secs = (double)(last_v - 3300) / (-slope);
+  double secs = (double)(last_v - (int)batteryEmptyMv()) / (-slope);
   if (secs < 0) secs = 0;
   long s = (long)secs;
   const int d = (int)(s / 86400); s %= 86400;
@@ -66147,8 +66238,12 @@ static void chatHeaderApply(bool chat_open) {
   // Layout across the full height of the tall bar.
   const lv_coord_t bar_h = statusBarCurH();
   const lv_coord_t av_sz = lv_obj_get_style_width(g_statusbar.chat_avatar, LV_PART_MAIN);
-  const lv_coord_t x_back = inset ? inset : 6;
-  const lv_coord_t x_av = x_back + SC(24) - 6, x_text = x_av + av_sz + 8;
+  // The back target is the bar left of the avatar (statusBarTapCb closes the chat;
+  // the avatar + title start chat_head, the chat-settings hit area). It was ~24 px,
+  // under the lip of a printed T-Deck case: the arrow steps in a little and the
+  // avatar + title move right, so the back strip is ~36 px wide.
+  const lv_coord_t x_back = (inset ? inset : 6) + SC(4);
+  const lv_coord_t x_av = x_back + SC(32) - 6, x_text = x_av + av_sz + 8;
   if (g_statusbar.chat_back) {
     sbTextColor(g_statusbar.chat_back, lv_color_hex(COLOR_TEXT));
     sbTranslateY(g_statusbar.chat_back, 0);
@@ -66320,7 +66415,7 @@ static void chatHeaderApply(bool chat_open) {
     lv_obj_align(g_statusbar.chat_avatar, LV_ALIGN_TOP_LEFT, x_av, text_mid - av_sz / 2);
     if (g_statusbar.chat_back) {
       const lv_font_t* bf = lv_obj_get_style_text_font(g_statusbar.chat_back, LV_PART_MAIN);
-      lv_obj_align(g_statusbar.chat_back, LV_ALIGN_TOP_LEFT, 6, text_mid - lv_font_get_line_height(bf) / 2);
+      lv_obj_align(g_statusbar.chat_back, LV_ALIGN_TOP_LEFT, x_back, text_mid - lv_font_get_line_height(bf) / 2);
     }
     // RIGHT_MID-aligned on the bar, so shift them from its middle onto the two lines'
     // centre, level with the back arrow and avatar. The panel's rounded corner cut
@@ -68156,7 +68251,7 @@ static int hwBattHoursLeft(uint16_t mv_now) {
   if (den <= 0) return -1;
   const double slope = (n * sxy - sx * sy) / den;   // mV per hour
   if (slope > -2.0) return -1;                        // steady or charging
-  const double h = (mv_now - 3300.0) / -slope;
+  const double h = (mv_now - (double)batteryEmptyMv()) / -slope;
   return h < 0 ? 0 : h > 999 ? 999 : (int)(h + 0.5);
 }
 
@@ -79047,7 +79142,8 @@ int luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* 
 }
 int luaHostRxLogAt(int idx, uint32_t* ms_ago, int* ptype, int* rssi, float* snr, int* hops,
                    int* route, int* len, int* org_kind, char* org_hex, size_t org_cap,
-                   uint32_t* at_ms, uint8_t* path, uint8_t* path_bytes, uint8_t* path_hash_sz) {
+                   uint32_t* at_ms, uint8_t* path, uint8_t* path_bytes, uint8_t* path_hash_sz,
+                   uint8_t* last_hop, uint8_t* last_hop_sz) {
   MyMesh::UiRxRec r;
   if (idx < 0 || !the_mesh.uiRxLogGet((uint8_t)idx, r)) return 0;
   if (at_ms) *at_ms = r.ms;   // the record's own timestamp: a stable delivery key
@@ -79064,10 +79160,14 @@ int luaHostRxLogAt(int idx, uint32_t* ms_ago, int* ptype, int* rssi, float* snr,
   // width the frame actually justifies, so 8 hex chars always means a key.
   if (org_hex && org_cap) luaPubkeyHex(r.org, r.org_kind == 1 ? 4 : 2, org_hex, org_cap);
   if (path && path_bytes && path_hash_sz) {
-    static_assert(MyMesh::UI_RXLOG_PATH_MAX == 16, "the buffers in LuaAppHost.cpp are LUA_RX_PATH_MAX");
+    static_assert(MyMesh::UI_RXLOG_PATH_MAX == 64, "the buffers in LuaAppHost.cpp are LUA_RX_PATH_MAX");
     memcpy(path, r.path, r.path_bytes);
     *path_bytes = r.path_bytes;
     *path_hash_sz = r.path_hash_sz;
+  }
+  if (last_hop && last_hop_sz) {
+    *last_hop_sz = r.last_hop_sz;
+    memcpy(last_hop, r.last_hop, sizeof r.last_hop);
   }
   return 1;
 }
@@ -79463,7 +79563,7 @@ static char s_appperm_ids[12][24];
 // granted is refused outright instead of prompting, so an unrelated app silently
 // lost the ability to send with no dialog ever shown (reported on Discord).
 #define APPPERM_SHIFT 8
-static_assert(LUA_PERM_PROBE < (1 << APPPERM_SHIFT),
+static_assert(LUA_PERM_HW < (1 << APPPERM_SHIFT),
               "APPPERM_SHIFT must exceed the widest LUA_PERM_* bit");
 static void appPermsToggleCb(lv_event_t* e) {
   const intptr_t packed = (intptr_t)lv_event_get_user_data(e);
@@ -79535,6 +79635,9 @@ static void buildAppPermsSettings() {
       { TR("Send private messages as me"), LUA_PERM_DM_SEND },
       { TR("Read private messages"), LUA_PERM_DM_READ },
       { TR("Send discovery probes"), LUA_PERM_PROBE },
+#if CAP_LUA_HW
+      { TR("Use the I2C bus and raw GPS data"), LUA_PERM_HW },
+#endif
     };
     for (const auto& p : perms)   // user_data packs the app index and the bit, one callback for all
       setSwitchRow(c, p.label, nullptr, (mask & p.bit) != 0, appPermsToggleCb,
@@ -79572,6 +79675,134 @@ void luaHostRequestProbePerm(const char* app_id, const char* app_name) {
            label);
   showConfirm(msg, TR("Allow"), +[]() { luaPermSetBit(s_lua_perm_target, LUA_PERM_PROBE, true); });
 }
+
+#if CAP_LUA_HW
+// ---- wada.i2c + wada.gps.nmea (#896): an app talks to hardware ---------------
+// Its own permission: an app that reads a sensor has no business speaking as the
+// user, and one that sends messages has no business on the bus.
+//
+// The bus is the board's main I2C bus (Wire). Arduino's Wire holds its own lock for
+// a whole transaction (beginTransmission .. endTransmission, a register read's
+// repeated start included), so an app's transaction never interleaves with the
+// keyboard, touch or sensor polls, whichever task they run on. Each call is short
+// and bounded: at most 32 bytes, Wire's 50 ms timeout, and a scan that stops at
+// the first bus error or after 150 ms, so a bus with no pull-ups cannot freeze the
+// UI for the 112 addresses x 50 ms it would otherwise take.
+//
+// The board's own chips are off limits, read and write: reading a keyboard or
+// touch controller consumes its events, and a write to a charger, fuel gauge, PMU
+// or IO expander can cut power or rails. The list is the union over the supported
+// boards, so an add-on sensor that happens to share one of these addresses is
+// refused too: the safe direction.
+int luaHostHwPerm(const char* app_id) {
+  bool asked = false;
+  const int mask = luaHostAppPerms(app_id, &asked);
+  if (!asked) return 0;
+  return (mask & LUA_PERM_HW) ? 1 : -1;
+}
+void luaHostRequestHwPerm(const char* app_id, const char* app_name) {
+  if (!app_id || !*app_id) return;
+  snprintf(s_lua_perm_target, sizeof s_lua_perm_target, "%s", app_id);
+  luaPermSetBit(app_id, LUA_PERM_HW, false);   // refused unless the user says otherwise
+  const char* label = (app_name && *app_name) ? app_name : app_id;
+  // Cyrillic and Greek take two bytes a letter. PSRAM, kept: off the loop stack and DRAM.
+  static char* msg = nullptr;
+  constexpr size_t kMsgCap = 640;
+  if (!msg) msg = (char*)psAlloc(kMsgCap);
+  if (!msg) return;
+  snprintf(msg, kMsgCap,
+           TR("\"%s\" wants to use the hardware: read and write devices on the I2C bus, "
+              "and read the GPS receiver's raw data.\n\n"
+              "A wrong write can change how a connected sensor behaves until it is "
+              "powered off. The device's own keyboard, touch and power chips stay off limits."),
+           label);
+  showConfirm(msg, TR("Allow"), +[]() { luaPermSetBit(s_lua_perm_target, LUA_PERM_HW, true); });
+}
+bool luaHostI2cReserved(uint8_t a) {
+  static const uint8_t kReserved[] = {
+    0x14, 0x5D,         // GT911 touch
+    0x15, 0x1A, 0x2E,   // CST816 / CST226 / CHSC6x touch
+    0x38,               // FT6x36 / FT5x06 touch
+    0x55,               // T-Deck keyboard, BQ27220 fuel gauge
+    0x34, 0x35,         // TCA8418 keyboard, AXP PMU
+    0x6D,               // ThinkNode M9 keyboard
+    0x6A, 0x6B,         // SY6970 / BQ25896 charger
+    0x51,               // PCF8563 / PCF85063 clock
+    0x18, 0x40,         // ES8311 / ES7210 audio
+    0x5A,               // DRV2605 haptics
+    0x28,               // BHI260 sensor hub (runs uploaded firmware)
+    0x3C, 0x3D,         // OLED displays
+  };
+  if (a < 0x08 || a > 0x77) return true;          // reserved by the I2C spec
+  if (a >= 0x20 && a <= 0x27) return true;        // IO expanders (XL9535, TCA9535, PCA9557)
+  for (uint8_t r : kReserved) if (r == a) return true;
+  return false;
+}
+int luaHostI2cScan(uint8_t* out, int cap, bool* partial) {
+  *partial = false;
+  int n = 0;
+  const uint32_t t0 = millis();
+  for (uint8_t a = 0x08; a <= 0x77; ++a) {
+    Wire.beginTransmission(a);
+    const uint8_t r = Wire.endTransmission();
+    if (r == 0) { if (n < cap) out[n++] = a; }
+    else if (r != 2) { *partial = true; break; }   // not a plain NACK: the bus itself failed
+    if ((uint32_t)(millis() - t0) > 150) { *partial = (a != 0x77); break; }
+  }
+  return n;
+}
+static const char* luaI2cErr(uint8_t r) { return r == 2 || r == 3 ? "no answer" : r == 5 ? "timeout" : "bus error"; }
+// reg < 0: a plain read with no register address written first.
+int luaHostI2cRead(uint8_t addr, int reg, uint8_t* buf, int n, const char** err) {
+  if (luaHostI2cReserved(addr)) { *err = "reserved"; return -1; }
+  if (reg >= 0) {
+    Wire.beginTransmission(addr);
+    Wire.write((uint8_t)reg);
+    const uint8_t r = Wire.endTransmission(false);   // repeated start: the lock is held into the read
+    if (r) { *err = luaI2cErr(r); return -1; }
+  }
+  const int got = (int)Wire.requestFrom((int)addr, n);
+  int i = 0;
+  while (Wire.available() && i < n) buf[i++] = (uint8_t)Wire.read();
+  while (Wire.available()) (void)Wire.read();
+  if (got <= 0 || i == 0) { *err = "no answer"; return -1; }
+  return i;
+}
+int luaHostI2cWrite(uint8_t addr, const uint8_t* buf, int n, const char** err) {
+  if (luaHostI2cReserved(addr)) { *err = "reserved"; return -1; }
+  Wire.beginTransmission(addr);
+  Wire.write(buf, (size_t)n);
+  const uint8_t r = Wire.endTransmission();
+  if (r) { *err = luaI2cErr(r); return -1; }
+  return n;
+}
+// The last few raw sentences, for wada.gps.nmea(). The copy starts the first time
+// an app asks and stops when it closes; PSRAM, 8 x 84 bytes (an NMEA sentence is at
+// most 82 characters).
+static constexpr int kLuaNmeaKeep = 8;
+static char (*s_lua_nmea)[84] = nullptr;
+static uint8_t s_lua_nmea_head = 0, s_lua_nmea_n = 0;
+static void luaNmeaTap(const char* sentence) {
+  if (!s_lua_nmea || !sentence) return;
+  snprintf(s_lua_nmea[s_lua_nmea_head], sizeof s_lua_nmea[0], "%s", sentence);
+  s_lua_nmea_head = (uint8_t)((s_lua_nmea_head + 1) % kLuaNmeaKeep);
+  if (s_lua_nmea_n < kLuaNmeaKeep) s_lua_nmea_n++;
+}
+void luaHostGpsTap(bool on) {
+  if (on && !s_lua_nmea) {
+    s_lua_nmea = (char(*)[84])psAlloc(sizeof(char[84]) * kLuaNmeaKeep);
+    if (!s_lua_nmea) return;
+  }
+  if (!on) s_lua_nmea_n = 0;
+  WadaNmeaLocationProvider::sentenceTap() = (on && s_lua_nmea) ? luaNmeaTap : nullptr;
+}
+// Oldest first: idx 0 is the oldest kept.
+int luaHostGpsNmeaCount() { return s_lua_nmea ? s_lua_nmea_n : 0; }
+const char* luaHostGpsNmeaAt(int idx) {
+  if (!s_lua_nmea || idx < 0 || idx >= s_lua_nmea_n) return nullptr;
+  return s_lua_nmea[(s_lua_nmea_head + kLuaNmeaKeep - s_lua_nmea_n + idx) % kLuaNmeaKeep];
+}
+#endif  // CAP_LUA_HW
 // A Lua ping's trace: onTracePingResult parks the answer here for the app's timer,
 // because it runs inside packet reception, where app code must not.
 static uint32_t s_lua_ping_tag = 0;
@@ -84716,6 +84947,10 @@ static bool     s_ssaver_pwr_always   = true;    // stays while external power i
 #if CAP_SSAVER_NORTH_LOCK
 static bool     s_ssaver_north_lock   = false;   // Keep north up: no slow turn (#706)
 #endif
+#if CAP_SSAVER_FILTERS
+static uint8_t  s_ssaver_range        = 0;       // 0 = Auto, 1..3 = 5 / 20 / 50 (km or mi)
+static bool     s_ssaver_fav_only     = false;   // only favourite nodes
+#endif
 static uint32_t s_ssaver_start_ms     = 0;
 static bool     s_ssaver_seen_power   = false;   // on external power at some point while showing
 static bool     s_ssaver_preview_req  = false;
@@ -84753,6 +84988,10 @@ static void ssaverLoadCfg() {
 #if CAP_SSAVER_NORTH_LOCK
   s_ssaver_north_lock = touchPrefsGetScreensaverNorthUp();
 #endif
+#if CAP_SSAVER_FILTERS
+  s_ssaver_range      = touchPrefsGetScreensaverRange();
+  s_ssaver_fav_only   = touchPrefsGetScreensaverFavOnly();
+#endif
 #endif
 }
 static void ssaverSetEnabled(bool on) {
@@ -84783,6 +85022,24 @@ static void ssaverSetNorthLock(bool on) {
   s_ssaver_north_lock = on;
 #if defined(ESP32)
   touchPrefsSetScreensaverNorthUp(on);
+#endif
+}
+#endif
+#if CAP_SSAVER_FILTERS
+static void ssaverSetRange(uint8_t idx) {
+  ssaverLoadCfg();
+  s_ssaver_range = idx;
+  s_ssaver_nodes_ms = 0;   // re-pick the nodes on the next pass
+#if defined(ESP32)
+  touchPrefsSetScreensaverRange(idx);
+#endif
+}
+static void ssaverSetFavOnly(bool on) {
+  ssaverLoadCfg();
+  s_ssaver_fav_only = on;
+  s_ssaver_nodes_ms = 0;
+#if defined(ESP32)
+  touchPrefsSetScreensaverFavOnly(on);
 #endif
 }
 #endif
@@ -84843,9 +85100,26 @@ static int ssaverBuildNodes(CstNode* out, bool& north_up) {
   int np = 0;
   const int total = the_mesh.getNumContacts();
   ContactInfo c;
+  const double my_lat = g_lv.task ? g_lv.task->getNodeLat() : 0.0;
+  const double my_lon = g_lv.task ? g_lv.task->getNodeLon() : 0.0;
+  const bool have_me = (my_lat != 0.0 || my_lon != 0.0);
+#if CAP_SSAVER_FILTERS
+  // A set range leaves out the nodes placed beyond it (a node with no position keeps
+  // its hop-count spot), and puts the outer ring at that distance instead of at the
+  // farthest node. "Favorites only" picks from the favourites alone.
+  ssaverLoadCfg();
+  const double range_km = kSsaverRangeSteps[s_ssaver_range & 3] * (ssaverMiles() ? 1.609344 : 1.0);
+#else
+  const double range_km = 0.0;
+#endif
   for (int i = 0; i < total; ++i) {
     if (!the_mesh.getContactByIdx((uint32_t)i, c)) continue;
     if (c.type == ADV_TYPE_NONE) continue;
+#if CAP_SSAVER_FILTERS
+    if (s_ssaver_fav_only && !(c.flags & 1)) continue;
+    if (range_km > 0.0 && have_me && (c.gps_lat != 0 || c.gps_lon != 0) &&
+        contactDistanceKm(my_lat, my_lon, c.gps_lat / 1e6, c.gps_lon / 1e6) > range_km) continue;
+#endif
     // Keep the kSsaverNodes most recent: insertion into a short sorted list.
     if (np == kSsaverNodes && c.lastmod <= pick[np - 1].mod) continue;
     int at = (np < kSsaverNodes) ? np++ : np - 1;
@@ -84855,9 +85129,6 @@ static int ssaverBuildNodes(CstNode* out, bool& north_up) {
 
   mesh::RTCClock* rtc = the_mesh.getRTCClock();
   const uint32_t now_epoch = rtc ? rtc->getCurrentTime() : 0;
-  const double my_lat = g_lv.task ? g_lv.task->getNodeLat() : 0.0;
-  const double my_lon = g_lv.task ? g_lv.task->getNodeLon() : 0.0;
-  const bool have_me = (my_lat != 0.0 || my_lon != 0.0);
 
   // Pass 1: positions, kinds, recency, routes; remember distances for the log scale.
   double km[kSsaverNodes];
@@ -84921,7 +85192,9 @@ static int ssaverBuildNodes(CstNode* out, bool& north_up) {
     if (k < 5 && n.level >= 2) ssaverCopyName(n.label, sizeof n.label, contactShownName(c.id.pub_key, c.name));
   }
   // Pass 2: the log scale, now that the farthest node is known. Nothing sits on
-  // top of you, and the farthest node you can place lands on the outer ring.
+  // top of you, and the farthest node you can place lands on the outer ring (or,
+  // with a range set, a node at that distance does).
+  if (range_km > 0.0) dmax = range_km;
   const double lmax = log1p(dmax);
   for (int k = 0; k < np; ++k) {
     if (!geo[k]) continue;

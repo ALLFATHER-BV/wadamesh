@@ -77,11 +77,12 @@ extern void luaHostLockScreen();
 extern int  luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago,
                              double* lat, double* lon, char* pk_hex, size_t pk_cap,
                              int32_t* lat_e6, int32_t* lon_e6);
-#define LUA_RX_PATH_MAX 16   // MyMesh::UI_RXLOG_PATH_MAX
+#define LUA_RX_PATH_MAX 64   // MyMesh::UI_RXLOG_PATH_MAX
 extern int  luaHostRxLogAt(int idx, uint32_t* ms_ago, int* ptype, int* rssi, float* snr, int* hops,
                            int* route, int* len, int* org_kind, char* org_hex, size_t org_cap,
                            uint32_t* at_ms = nullptr, uint8_t* path = nullptr,
-                           uint8_t* path_bytes = nullptr, uint8_t* path_hash_sz = nullptr);
+                           uint8_t* path_bytes = nullptr, uint8_t* path_hash_sz = nullptr,
+                           uint8_t* last_hop = nullptr, uint8_t* last_hop_sz = nullptr);
 extern int  luaHostDiscoverCount();
 extern void luaHostDiscoverClear();
 extern int  luaHostDiscoverAt(int idx, char* pk_hex, size_t pk_cap, char* name, size_t name_cap,
@@ -145,6 +146,17 @@ extern int   luaHostMapLine(void* v, double la1, double lo1, double la2, double 
                             uint32_t color, int width);
 extern int      luaHostProbePerm(const char* app_id);
 extern void     luaHostRequestProbePerm(const char* app_id, const char* app_name);
+#if CAP_LUA_HW
+extern int      luaHostHwPerm(const char* app_id);
+extern void     luaHostRequestHwPerm(const char* app_id, const char* app_name);
+extern bool     luaHostI2cReserved(uint8_t addr);
+extern int      luaHostI2cScan(uint8_t* out, int cap, bool* partial);
+extern int      luaHostI2cRead(uint8_t addr, int reg, uint8_t* buf, int n, const char** err);
+extern int      luaHostI2cWrite(uint8_t addr, const uint8_t* buf, int n, const char** err);
+extern void     luaHostGpsTap(bool on);
+extern int      luaHostGpsNmeaCount();
+extern const char* luaHostGpsNmeaAt(int idx);
+#endif
 extern uint32_t luaHostMeshDiscover(int type_filter);
 #endif
 #if CAP_COMPASS
@@ -1181,6 +1193,9 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "list");       // wada.ui.list
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "packets");    // app.on_packet
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "paths");      // repeater hashes in packets, messages, repeats()
+  lua_pushboolean(L, 1);                lua_setfield(L, -2, "last_hop");   // rx_log/on_packet last_hop, paths up to 64 bytes
+  lua_pushboolean(L, CAP_LUA_HW);       lua_setfield(L, -2, "i2c");        // wada.i2c (permission: hardware)
+  lua_pushboolean(L, CAP_LUA_HW);       lua_setfield(L, -2, "gps_nmea");   // wada.gps.nmea (same permission)
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "ping");       // wada.mesh.ping + app.on_ping
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "measure");    // ui.text_w / text_lines
   lua_pushboolean(L, CAP_SENSORS);      lua_setfield(L, -2, "sensors");    // wada.sys.env
@@ -1750,6 +1765,115 @@ int meshDiscover(lua_State* L) {
   lua_pushinteger(L, (lua_Integer)tag);
   return 1;
 }
+
+#if CAP_LUA_HW
+// ---- wada.i2c / wada.gps (#896) ---------------------------------------------
+// Behind LUA_PERM_HW (Settings > App permissions). The first refusal raises the
+// consent prompt, like send and discover. The answer is cached for the app's run:
+// the check reads a file, and a sensor app polls the bus every tick. A refusal is
+// looked at again at most every 2 s, so a grant from the prompt takes effect.
+struct HwPermCache { uint32_t gen = 0; int perm = 0; uint32_t at = 0; };
+HwPermCache s_hw_perm;
+bool hwAllowed(lua_State* L) {
+  if (!s_h) { lua_pushnil(L); lua_pushstring(L, "no app"); return false; }
+  const uint32_t now = millis();
+  if (s_hw_perm.gen != s_h->generation || (s_hw_perm.perm != 1 && (uint32_t)(now - s_hw_perm.at) > 2000)) {
+    const bool first = s_hw_perm.gen != s_h->generation;
+    s_hw_perm.gen = s_h->generation;
+    s_hw_perm.perm = luaHostHwPerm(s_h->id);
+    s_hw_perm.at = now;
+    if (s_hw_perm.perm == 0 && first) luaHostRequestHwPerm(s_h->id, s_h->id);   // ask once, never in a loop
+  }
+  if (s_hw_perm.perm == 1) return true;
+  lua_pushnil(L);
+  lua_pushstring(L, s_hw_perm.perm == 0 ? "permission requested" : "permission denied");
+  return false;
+}
+constexpr int kI2cMaxBytes = 32;
+int checkI2cAddr(lua_State* L, int arg) {
+  const lua_Integer a = luaL_checkinteger(L, arg);
+  luaL_argcheck(L, a >= 0x08 && a <= 0x77, arg, "address 0x08..0x77");
+  return (int)a;
+}
+// wada.i2c.scan() -> { addr, ... } (ascending) | nil, reason. Includes the board's
+// own chips: they answer, and a scanner should show what is there. ", partial" as a
+// second value when the bus failed or the 150 ms budget ran out before 0x77.
+int i2cScan(lua_State* L) {
+  if (!hwAllowed(L)) return 2;
+  uint8_t found[112]; bool partial = false;
+  const int n = luaHostI2cScan(found, (int)sizeof found, &partial);
+  lua_createtable(L, n, 0);
+  for (int i = 0; i < n; i++) { lua_pushinteger(L, found[i]); lua_rawseti(L, -2, i + 1); }
+  if (partial) { lua_pushstring(L, "partial"); return 2; }
+  return 1;
+}
+// wada.i2c.reserved(addr) -> true for the board's own chips (and the addresses
+// the I2C spec reserves): read() and write() refuse those. No permission needed.
+int i2cReserved(lua_State* L) {
+  const lua_Integer a = luaL_checkinteger(L, 1);
+  lua_pushboolean(L, a < 0 || a > 0x7F || luaHostI2cReserved((uint8_t)a));
+  return 1;
+}
+// wada.i2c.read(addr, reg, n) -> { byte, ... } | nil, reason. reg = nil reads
+// without writing a register address first. n is 1..32.
+int i2cRead(lua_State* L) {
+  const int addr = checkI2cAddr(L, 1);
+  const int reg = lua_isnoneornil(L, 2) ? -1 : (int)luaL_checkinteger(L, 2);
+  luaL_argcheck(L, reg >= -1 && reg <= 0xFF, 2, "register 0..255");
+  const int n = (int)luaL_optinteger(L, 3, 1);
+  luaL_argcheck(L, n >= 1 && n <= kI2cMaxBytes, 3, "1..32 bytes");
+  if (!hwAllowed(L)) return 2;
+  uint8_t buf[kI2cMaxBytes]; const char* err = "bus error";
+  const int got = luaHostI2cRead((uint8_t)addr, reg, buf, n, &err);
+  if (got < 0) { lua_pushnil(L); lua_pushstring(L, err); return 2; }
+  lua_createtable(L, got, 0);
+  for (int i = 0; i < got; i++) { lua_pushinteger(L, buf[i]); lua_rawseti(L, -2, i + 1); }
+  return 1;
+}
+// wada.i2c.write(addr, bytes) -> true | nil, reason. bytes is a table of 0..255
+// or a string, 1..32 bytes; a register write puts the register first.
+int i2cWrite(lua_State* L) {
+  const int addr = checkI2cAddr(L, 1);
+  uint8_t buf[kI2cMaxBytes]; int n = 0;
+  if (lua_type(L, 2) == LUA_TSTRING) {
+    size_t len = 0; const char* str = lua_tolstring(L, 2, &len);
+    luaL_argcheck(L, len >= 1 && len <= (size_t)kI2cMaxBytes, 2, "1..32 bytes");
+    memcpy(buf, str, len); n = (int)len;
+  } else {
+    luaL_checktype(L, 2, LUA_TTABLE);
+    n = (int)lua_rawlen(L, 2);
+    luaL_argcheck(L, n >= 1 && n <= kI2cMaxBytes, 2, "1..32 bytes");
+    for (int i = 0; i < n; i++) {
+      lua_rawgeti(L, 2, i + 1);
+      const lua_Integer v = lua_tointeger(L, -1);
+      lua_pop(L, 1);
+      luaL_argcheck(L, v >= 0 && v <= 0xFF, 2, "bytes 0..255");
+      buf[i] = (uint8_t)v;
+    }
+  }
+  if (!hwAllowed(L)) return 2;
+  const char* err = "bus error";
+  if (luaHostI2cWrite((uint8_t)addr, buf, n, &err) < 0) { lua_pushnil(L); lua_pushstring(L, err); return 2; }
+  lua_pushboolean(L, 1);
+  return 1;
+}
+// wada.gps.nmea() -> { sentence, ... } oldest first, up to the last 8 checksummed
+// sentences the receiver sent | nil, reason. The copy starts with the first call
+// (which may return an empty list) and stops when the app closes. Empty on a board
+// without a GPS, or one whose GPS is off.
+int gpsNmea(lua_State* L) {
+  if (!hwAllowed(L)) return 2;
+  luaHostGpsTap(true);
+  const int n = luaHostGpsNmeaCount();
+  lua_createtable(L, n, 0);
+  for (int i = 0; i < n; i++) {
+    const char* sn = luaHostGpsNmeaAt(i);
+    if (!sn) break;
+    lua_pushstring(L, sn); lua_rawseti(L, -2, i + 1);
+  }
+  return 1;
+}
+#endif  // CAP_LUA_HW
 
 // wada.mesh.ping(name_or_pubkey) -> tag | nil, reason
 //
@@ -2874,29 +2998,26 @@ int meshContacts(lua_State* L) {
 // frames instead expose `src`/`dst`, the one-byte hashes they carry; two hex
 // characters collide easily, so treat them as a hint, not an identity. Anything
 // else is anonymous on the wire and gets neither field.
+//
+// `last_hop` (floods with at least one hop) is the repeater our radio actually
+// heard: the last hash of the full path, kept even when `path` is capped. With
+// `snr`/`rssi` it gives a per-repeater link reading.
+struct LuaRxRec {
+  uint32_t at, ago; int ptype, rssi, hops, route, len, kind; float snr; char org[12];
+  uint8_t path[LUA_RX_PATH_MAX], path_bytes, path_sz, last_hop[4], last_hop_sz;
+};
+static bool luaRxGet(int idx, LuaRxRec& r) {
+  return luaHostRxLogAt(idx, &r.ago, &r.ptype, &r.rssi, &r.snr, &r.hops,
+                        &r.route, &r.len, &r.kind, r.org, sizeof r.org, &r.at,
+                        r.path, &r.path_bytes, &r.path_sz, r.last_hop, &r.last_hop_sz) != 0;
+}
+void pushPacketTable(lua_State* L, const LuaRxRec& r);
 int meshRxLog(lua_State* L) {
   lua_newtable(L);
-  uint32_t ms_ago; int ptype, rssi, hops, route, flen, org_kind; float snr; char org[12];
-  uint8_t path[LUA_RX_PATH_MAX], path_bytes, path_sz;
+  LuaRxRec r;
   for (int i = 0, out = 0; i < 64; i++) {
-    if (!luaHostRxLogAt(i, &ms_ago, &ptype, &rssi, &snr, &hops,
-                        &route, &flen, &org_kind, org, sizeof org,
-                        nullptr, path, &path_bytes, &path_sz)) break;
-    lua_createtable(L, 0, 10);
-    lua_pushinteger(L, (lua_Integer)ms_ago); lua_setfield(L, -2, "ago_ms");
-    lua_pushinteger(L, ptype);               lua_setfield(L, -2, "type");
-    lua_pushinteger(L, rssi);                lua_setfield(L, -2, "rssi");
-    lua_pushnumber(L, snr);                  lua_setfield(L, -2, "snr");
-    lua_pushinteger(L, hops);                lua_setfield(L, -2, "hops");
-    lua_pushinteger(L, route);               lua_setfield(L, -2, "route");
-    lua_pushinteger(L, flen);                lua_setfield(L, -2, "len");
-    if (org_kind == 1) {
-      lua_pushstring(L, org); lua_setfield(L, -2, "pubkey");
-    } else if (org_kind == 2 && strlen(org) >= 4) {
-      lua_pushlstring(L, org, 2);     lua_setfield(L, -2, "dst");
-      lua_pushlstring(L, org + 2, 2); lua_setfield(L, -2, "src");
-    }
-    if (route == 0 || route == 1) { pushPathHops(L, path, path_bytes, path_sz); lua_setfield(L, -2, "path"); }
+    if (!luaRxGet(i, r)) break;
+    pushPacketTable(L, r);
     lua_rawseti(L, -2, ++out);
   }
   return 1;
@@ -2920,24 +3041,30 @@ lv_timer_t* s_pkt_poll = nullptr;
 uint32_t    s_pkt_last_ms = 0;      // newest record timestamp already delivered
 bool        s_pkt_primed = false;
 
-void pushPacketTable(lua_State* L, uint32_t ago_ms, int ptype, int rssi, float snr, int hops,
-                     int route, int flen, int org_kind, const char* org,
-                     const uint8_t* path, uint8_t path_bytes, uint8_t path_sz) {
-  lua_createtable(L, 0, 10);
-  lua_pushinteger(L, (lua_Integer)ago_ms); lua_setfield(L, -2, "ago_ms");
-  lua_pushinteger(L, ptype);               lua_setfield(L, -2, "type");
-  lua_pushinteger(L, rssi);                lua_setfield(L, -2, "rssi");
-  lua_pushnumber(L, snr);                  lua_setfield(L, -2, "snr");
-  lua_pushinteger(L, hops);                lua_setfield(L, -2, "hops");
-  lua_pushinteger(L, route);               lua_setfield(L, -2, "route");
-  lua_pushinteger(L, flen);                lua_setfield(L, -2, "len");
-  if (org_kind == 1) {
-    lua_pushstring(L, org); lua_setfield(L, -2, "pubkey");
-  } else if (org_kind == 2 && strlen(org) >= 4) {
-    lua_pushlstring(L, org, 2);     lua_setfield(L, -2, "dst");
-    lua_pushlstring(L, org + 2, 2); lua_setfield(L, -2, "src");
+// One rx_log / on_packet entry (the same table for both).
+void pushPacketTable(lua_State* L, const LuaRxRec& r) {
+  lua_createtable(L, 0, 11);
+  lua_pushinteger(L, (lua_Integer)r.ago);  lua_setfield(L, -2, "ago_ms");
+  lua_pushinteger(L, r.ptype);             lua_setfield(L, -2, "type");
+  lua_pushinteger(L, r.rssi);              lua_setfield(L, -2, "rssi");
+  lua_pushnumber(L, r.snr);                lua_setfield(L, -2, "snr");
+  lua_pushinteger(L, r.hops);              lua_setfield(L, -2, "hops");
+  lua_pushinteger(L, r.route);             lua_setfield(L, -2, "route");
+  lua_pushinteger(L, r.len);               lua_setfield(L, -2, "len");
+  if (r.kind == 1) {
+    lua_pushstring(L, r.org); lua_setfield(L, -2, "pubkey");
+  } else if (r.kind == 2 && strlen(r.org) >= 4) {
+    lua_pushlstring(L, r.org, 2);     lua_setfield(L, -2, "dst");
+    lua_pushlstring(L, r.org + 2, 2); lua_setfield(L, -2, "src");
   }
-  if (route == 0 || route == 1) { pushPathHops(L, path, path_bytes, path_sz); lua_setfield(L, -2, "path"); }
+  if (r.route == 0 || r.route == 1) {
+    pushPathHops(L, r.path, r.path_bytes, r.path_sz); lua_setfield(L, -2, "path");
+    if (r.last_hop_sz) {   // the same one-hop hex spelling as the path entries
+      pushPathHops(L, r.last_hop, r.last_hop_sz, r.last_hop_sz);
+      lua_rawgeti(L, -1, 1); lua_remove(L, -2);
+      lua_setfield(L, -2, "last_hop");
+    }
+  }
 }
 
 #if CAP_LUA_AUDIO
@@ -2972,32 +3099,32 @@ void audioPollCb(lv_timer_t* t) {
 void packetPollCb(lv_timer_t* t) {
   (void)t;
   if (!s_h || !s_h->L) return;
-  // Snapshot the ring newest-first, then deliver oldest-first so an app sees
-  // arrival order. 16 is the ring depth; reading past it just stops.
-  struct Rec { uint32_t at, ago; int ptype, rssi, hops, route, len, kind; float snr; char org[12];
-               uint8_t path[LUA_RX_PATH_MAX], path_bytes, path_sz; };
-  Rec recs[16];
+  // Note the new records' timestamps newest-first, then deliver oldest-first so an
+  // app sees arrival order. 16 is the ring depth; reading past it just stops. Only
+  // the timestamps are kept (not 16 copies of a record with a 64-byte path on the
+  // loop task's stack); each record is fetched again by its timestamp to deliver.
+  LuaRxRec r;
+  uint32_t ats[16];
   int n = 0;
   uint32_t newest = s_pkt_last_ms;
   for (int i = 0; i < 16; i++) {
-    Rec r;
-    if (!luaHostRxLogAt(i, &r.ago, &r.ptype, &r.rssi, &r.snr, &r.hops,
-                        &r.route, &r.len, &r.kind, r.org, sizeof r.org, &r.at,
-                        r.path, &r.path_bytes, &r.path_sz)) break;
+    if (!luaRxGet(i, r)) break;
     // millis() wraps at 49 days; compare as a signed delta so the wrap does not
     // silently stop delivery for the rest of the session.
     if ((int32_t)(r.at - s_pkt_last_ms) <= 0) break;   // already delivered, and so is everything older
     if ((int32_t)(r.at - newest) > 0) newest = r.at;
-    if (n < 16) recs[n++] = r;
+    ats[n++] = r.at;
   }
   s_pkt_last_ms = newest;
   if (!s_pkt_primed) { s_pkt_primed = true; return; }   // first pass only establishes the mark
-  for (int i = n - 1; i >= 0; i--) {                    // oldest first
+  for (int k = n - 1; k >= 0; k--) {                    // oldest first
     if (!s_h || !s_h->L) return;
+    // Normally still at index k; a frame logged meanwhile shifts it, so look it up.
+    bool found = luaRxGet(k, r) && r.at == ats[k];
+    for (int i = 0; !found && i < 16; i++) found = luaRxGet(i, r) && r.at == ats[k];
+    if (!found) continue;   // already overwritten
     if (!pushCallback(s_h, "on_packet")) return;
-    pushPacketTable(s_h->L, recs[i].ago, recs[i].ptype, recs[i].rssi, recs[i].snr, recs[i].hops,
-                    recs[i].route, recs[i].len, recs[i].kind, recs[i].org,
-                    recs[i].path, recs[i].path_bytes, recs[i].path_sz);
+    pushPacketTable(s_h->L, r);
     guardedCall(s_h, 1);
     serviceDeferredClose();
   }
@@ -3627,6 +3754,18 @@ void openWada(lua_State* L) {
 #endif
   lua_setfield(L, -2, "mesh");
 
+#if CAP_LUA_HW
+  lua_newtable(L);                                       // wada.i2c (permission: hardware)
+  lua_pushcfunction(L, i2cScan);     lua_setfield(L, -2, "scan");
+  lua_pushcfunction(L, i2cRead);     lua_setfield(L, -2, "read");
+  lua_pushcfunction(L, i2cWrite);    lua_setfield(L, -2, "write");
+  lua_pushcfunction(L, i2cReserved); lua_setfield(L, -2, "reserved");
+  lua_setfield(L, -2, "i2c");
+  lua_newtable(L);                                       // wada.gps (permission: hardware)
+  lua_pushcfunction(L, gpsNmea);     lua_setfield(L, -2, "nmea");
+  lua_setfield(L, -2, "gps");
+#endif
+
 #if defined(ESP32)
   lua_newtable(L);                                       // wada.crypto (all boards)
   lua_pushcfunction(L, cryptoSha256);     lua_setfield(L, -2, "sha256");
@@ -3895,6 +4034,9 @@ void hostTeardown() {
   s_h = nullptr;                     // bindings see "closed" from here on
 #if CAP_LUA_AUDIO
   luaHostAudioStop(h->generation, true);
+#endif
+#if CAP_LUA_HW
+  luaHostGpsTap(false);              // no more copies of GPS sentences once the app is gone
 #endif
   // A wada.ui.input dialog lives on lv_layer_top, so it would outlive the app
   // that opened it. Drop it before the state goes, not after.

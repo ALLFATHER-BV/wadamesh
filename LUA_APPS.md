@@ -44,9 +44,17 @@ We do NOT bind LVGL wholesale. We bind a stable, versioned surface we own
   trackball dirs. (Snake's swipe steering maps here; the existing
   SnakeGame gesture path shows the shape.)
 - `wada.mesh` (READ-ONLY v1) — `contacts()` snapshot (name/type/last_seen/
-  rssi), `rx_log()` ring (the RF Monitor feed), `stats()` (airtime used,
+  rssi), `rx_log()` ring (the RF Monitor feed; floods carry `path`, up to
+  64 bytes, and `last_hop`, the repeater the radio heard), `stats()` (airtime used,
   duty budget, tx/rx counters, noise floor, current rssi), `self()` (name,
   lat/lon, battery_mv). No TX of any kind in v1 — mesh safety line.
+- `wada.i2c` / `wada.gps` (#896, `caps().i2c`) — `i2c.scan()`, `i2c.read(addr, reg, n)`,
+  `i2c.write(addr, bytes)`, `i2c.reserved(addr)` on the board's main bus (Wire),
+  and `gps.nmea()`, the last 8 raw sentences. Behind the "hardware" app
+  permission (LUA_PERM_HW). Bounded calls on the UI thread (32 bytes, Wire's
+  50 ms timeout, a 150 ms scan budget); Wire's own lock keeps each transaction
+  whole against the keyboard/touch/sensor polls. The board's own chips are
+  refused (luaHostI2cReserved in UITask.cpp). No GPS config writes.
 - `wada.net` — `http_get(url, cb, max_bytes)` async on the existing tile-fetch
   worker; plain HTTP (V4 cannot TLS); response size capped (64 KB default).
 - `wada.store` — per-app KV: `get/set(key, value)` under an `app.<id>.` prefix

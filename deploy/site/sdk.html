@@ -162,6 +162,7 @@
     <a href="#fs">wada.fs</a>
     <a href="#audio">wada.audio</a>
     <a href="#sd">wada.sd</a>
+    <a href="#i2c">wada.i2c / wada.gps</a>
     <a href="#sys">wada.sys</a>
     <a href="#timer">wada.timer</a>
     <a href="#discover">Discovery</a>
@@ -321,7 +322,7 @@ return app</code></pre>
         <table class="api">
           <tr><td>wada.mesh.contacts([offset], [limit])</td><td>Array of <code>{name, pubkey, type, ago_s, lat, lon, lat_e6, lon_e6, flags, favorite}</code>. <code>pubkey</code> is the first 4 bytes as 8 hex characters, the same short form the rest of the interface uses, and what lines a contact up with a discovery hit. Returns at most <code>limit</code> entries (default 100, maximum 250) starting at <code>offset</code>, because every entry is an eight-field table and building thousands in one call would exhaust the app heap. On a device with more contacts than that, page through them: ask for 100, then 100 from offset 100, and so on.</td></tr>
           <tr><td>wada.mesh.contact_count()</td><td>How many contacts the device holds, so you can page through <code>contacts()</code> without calling it repeatedly to find where the list ends.</td></tr>
-          <tr><td>wada.mesh.rx_log()</td><td>Recent packets, newest first: <code>{ago_ms, type, rssi, snr, hops, route, len}</code>, plus whatever identity the frame actually carried (see below). Floods (<code>route</code> 0 or 1) also have <code>path</code>, the repeaters so far, written like <code>m.path</code> and limited to the first 16 bytes, so a long path can list fewer hops than <code>hops</code> says. The RF Monitor feed.</td></tr>
+          <tr><td>wada.mesh.rx_log()</td><td>Recent packets, newest first: <code>{ago_ms, type, rssi, snr, hops, route, len}</code>, plus whatever identity the frame actually carried (see below). Floods (<code>route</code> 0 or 1) also have <code>path</code>, the repeaters so far, written like <code>m.path</code> and limited to the first 64 bytes (16 before <code>caps().last_hop</code>), so a very long path can list fewer hops than <code>hops</code> says. A flood that came through at least one repeater also has <code>last_hop</code>: the hash of the repeater your radio actually heard (the last hop of the full path, even when <code>path</code> is cut short), so <code>snr</code> and <code>rssi</code> describe your link to that repeater. Group by <code>last_hop</code> to track signal per repeater. The RF Monitor feed.</td></tr>
           <tr><td>wada.mesh.stats()</td><td><code>{rssi, noise, rx_air_s, tx_air_s, rx_pkts, rx_err, tx_budget_ms, rx_events, rx_dropped, tx_pkts, freq, bw, sf, duty_pct}</code>.</td></tr>
           <tr><td>wada.mesh.self()</td><td>This node: <code>{name, pubkey, lat, lon, lat_e6, lon_e6}</code>.</td></tr>
           <tr><td>wada.mesh.discovered()</td><td>Everything that has answered a probe this session: <code>{pubkey, name, type, rssi, snr, their_snr, hops, direct, first_ms_ago, last_ms_ago, heard}</code>. <code>name</code> is present only if the responder is already one of your contacts. See <a href="#discover">discovery</a>.</td></tr>
@@ -391,6 +392,7 @@ return app</code></pre>
         <p>Declare <code>on_packet</code> and the firmware calls it once per frame the radio received, in arrival order, with the same table <a href="#mesh"><code>rx_log()</code></a> rows use.</p>
         <pre><code>function app.on_packet(p)
   if p.pubkey then adverts = adverts + 1 end   -- an advert: a real identity
+  if p.last_hop then best[p.last_hop] = math.max(best[p.last_hop] or -99, p.snr) end
   total = total + 1
 end</code></pre>
         <p>Polling <code>rx_log()</code> on a tick samples a 16-deep ring, so in any real traffic an app sees a subset and cannot <i>count</i> anything. This delivers each frame exactly once. An app that does not declare <code>on_packet</code> costs nothing: the drain is only started for apps that asked for it.</p>
@@ -532,6 +534,30 @@ end</code></pre>
       </div></div>
     </section>
 
+    <section class="doc" id="i2c">
+      <h2>wada.i2c and wada.gps <span class="chip">i2c</span></h2>
+      <div class="row"><div class="prose">
+        <p>Hardware access for sensor and receiver apps: the board's main I2C bus, and the GPS receiver's raw NMEA sentences. Both need the <b>hardware</b> permission (see <a href="#perms">Permissions</a>): the first call asks, and until it is granted every call returns <code>nil, "permission requested"</code> or <code>nil, "permission denied"</code>. Check <code>wada.sys.caps().i2c</code> and <code>caps().gps_nmea</code>; neither is on the T-LoRa Pager, the Heltec V4 or the ESP-IDF boards (T-Display P4, CrowPanel P4, Tanmatsu).</p>
+        <table class="api">
+          <tr><th>Call</th><th>Returns / does</th></tr>
+          <tr><td>wada.i2c.scan()</td><td>The 7-bit addresses (0x08 to 0x77) that answer, ascending, as integers. The board's own chips answer too. A second value <code>"partial"</code> means the scan stopped early: the bus failed (no pull-ups, a stuck line) or it ran past 150&nbsp;ms.</td></tr>
+          <tr><td>wada.i2c.read(addr, reg, n)</td><td>Writes the register address <code>reg</code> (0 to 255), then reads <code>n</code> bytes (1 to 32, default 1) with a repeated start. <code>reg = nil</code> reads without writing a register first. Returns a table of byte values, or <code>nil, reason</code>: <code>"no answer"</code>, <code>"timeout"</code>, <code>"bus error"</code> or <code>"reserved"</code>.</td></tr>
+          <tr><td>wada.i2c.write(addr, bytes)</td><td>Writes 1 to 32 bytes, given as a table of 0 to 255 or a string; for a register write put the register first. Returns <code>true</code> or <code>nil, reason</code> as above.</td></tr>
+          <tr><td>wada.i2c.reserved(addr)</td><td><code>true</code> for an address <code>read</code> and <code>write</code> refuse. No permission needed.</td></tr>
+          <tr><td>wada.gps.nmea()</td><td>Up to the last 8 checksummed sentences from the receiver, oldest first, as strings such as <code>"$GNRMC,..."</code>. The firmware starts keeping them on the first call, so that one may return an empty list, and stops when the app closes. Empty on a board without a GPS or while the GPS is off.</td></tr>
+        </table>
+        <pre><code>local found = wada.i2c.scan()
+for _, a in ipairs(found or {}) do
+  if a == 0x76 then
+    local id = wada.i2c.read(0x76, 0xD0, 1)   -- a BME280 answers 0x60
+  end
+end</code></pre>
+        <p>Every call runs on the UI thread and is short by design: 32 bytes at most, the bus's 50&nbsp;ms timeout, and the 150&nbsp;ms scan budget. Each transaction holds the bus lock from start to stop, so it never interleaves with the keyboard, touch or sensor polls that share the bus. Poll a sensor from a timer, not in a loop.</p>
+        <p>Off limits, read and write: the board's own input, power, audio and display chips (touch controllers, keyboards, chargers, fuel gauges, PMUs, IO expanders 0x20 to 0x27, the clock, codecs, haptics, OLEDs). Reading a keyboard or touch controller consumes its events, and a write to a charger or IO expander can cut power. The list covers every supported board, so an add-on that shares one of those addresses is refused too. A write to anything else is the app's responsibility: it can change how a sensor behaves until it is powered off.</p>
+        <p>Sending configuration to the GPS receiver is not offered: a wrong baud-rate or output setting can survive a restart on receivers with a backup battery and silence the GPS for the whole firmware.</p>
+      </div></div>
+    </section>
+
     <section class="doc" id="sys">
       <h2>wada.sys</h2>
       <div class="row"><div class="prose">
@@ -547,7 +573,7 @@ end</code></pre>
           <tr><td colspan="2" style="color:var(--mut)">Text entry you open with <code>wada.ui.input()</code> is the firmware's own field, so it comes with the firmware's editing: long-press it for Cut, Copy, Paste, All, Sym (special characters) and Emoji. You do not need to build any of that yourself, and anything copied from a chat pastes straight in.</td></tr>
           <tr><td>wada.sys.tr(s)</td><td>Translate <code>s</code> through the device's active language, using the same table the firmware's own interface uses. Returns <code>s</code> unchanged when there is no translation, so it is always safe to wrap a string. Add your keys to <code>deploy/apps/lang/&lt;code&gt;.lang</code> alongside the firmware's. Older firmware has no <code>sys.tr</code>: write <code>local tr = sys.tr or function(x) return x end</code> and call <code>tr()</code>.</td></tr>
           <tr><td>wada.sys.beep()</td><td>Short beep on boards with a buzzer; silent elsewhere, and silent when the user has sound off.</td></tr>
-          <tr><td>wada.sys.caps()</td><td><code>{sdk_ext, keyboard, touch, sd, sd_list, sd_clean, audio, audio_wav, audio_mp3, audio_sd, compass, accel, discover, input, rx_identity, list, packets, paths, ping, sensors, map, measure, widget, panel, audio_events, image, input_len, epaper, request, https, press}</code>. Check <code>sdk_ext</code> before using anything marked <span class="chip">ext</span>, <code>sd_list</code> before using <code>wada.sd</code>, and <code>audio</code> plus the format flag before using <code>wada.audio</code>. <code>audio_sd</code> means direct <code>sd:</code> paths are available; plain audio names use app storage and do not require it.</td></tr>
+          <tr><td>wada.sys.caps()</td><td><code>{sdk_ext, keyboard, touch, sd, sd_list, sd_clean, audio, audio_wav, audio_mp3, audio_sd, compass, accel, discover, input, rx_identity, list, packets, paths, last_hop, i2c, gps_nmea, ping, sensors, map, measure, widget, panel, audio_events, image, input_len, epaper, request, https, press}</code>. Check <code>sdk_ext</code> before using anything marked <span class="chip">ext</span>, <code>sd_list</code> before using <code>wada.sd</code>, and <code>audio</code> plus the format flag before using <code>wada.audio</code>. <code>audio_sd</code> means direct <code>sd:</code> paths are available; plain audio names use app storage and do not require it.</td></tr>
           <tr><td>wada.sys.battery() <span class="chip">ext</span></td><td><code>{mv, pct, charging}</code>.</td></tr>
           <tr><td>wada.sys.env() <span class="chip">sensors</span></td><td><code>{temp_c, humidity, pressure_hpa, alt_m}</code>, or <code>nil</code>. A field is present only when the hardware actually reported it, so you can tell "no humidity sensor" from "0% humidity". Gated on <code>caps().sensors</code> (does this board <i>have</i> the sensor rail?) and <b>not</b> on <code>sdk_ext</code>, which is a memory gate. Those are different questions: the plain Heltec V4 has the Expansion Kit but not the extended SDK, and most boards with the extended SDK have no sensors at all.</td></tr>
           <tr><td>wada.sys.gps() <span class="chip">ext</span></td><td><code>{lat, lon, lat_e6, lon_e6, sats, alt_m, time, speed_kmh, course}</code>, or <code>nil</code> with no fix, which is the normal indoor case, so handle it. <code>lat_e6</code>/<code>lon_e6</code> are exact micro-degrees; <code>lat</code>/<code>lon</code> are single-precision floats, so <a href="#discover">log the integers</a>. <code>alt_m</code> is metres. <code>time</code> is satellite time, absent until the receiver has decoded the date. <code>speed_kmh</code> and <code>course</code> (degrees clockwise from north) appear only on boards whose GPS provider reports them, and <code>course</code> only while actually moving: a stationary receiver has no course, so it is absent rather than 0. Treat those last three as optional.</td></tr>
@@ -606,7 +632,7 @@ end</code></pre>
     <section class="doc" id="perms">
       <h2>Permissions</h2>
       <div class="row"><div class="prose">
-        <p>Two things an app can ask for reach past its own window, so they are not granted by installing it:</p>
+        <p>Some things an app can ask for reach past its own window, so they are not granted by installing it:</p>
         <table class="api">
           <tr><th>Permission</th><th>Unlocks</th></tr>
           <tr><td>Post to channels as me</td><td><code>wada.mesh.send</code>, posting to a channel in your name.</td></tr>
@@ -614,6 +640,7 @@ end</code></pre>
           <tr><td>Send private messages as me</td><td><code>wada.mesh.send_dm</code>, writing to one contact or posting to a room as you.</td></tr>
           <tr><td>Read private messages</td><td><code>app.on_message</code> for <code>kind == "dm"</code> and <code>"room"</code>.</td></tr>
           <tr><td>Send discovery probes</td><td><code>wada.mesh.discover</code>. Separate from the send permissions because it transmits nothing under your name but does make every node in range transmit a reply.</td></tr>
+          <tr><td>Use the I2C bus and raw GPS data</td><td><a href="#i2c"><code>wada.i2c</code> and <code>wada.gps</code></a>. Nothing goes on the air, but a write can reconfigure a connected sensor.</td></tr>
         </table>
         <p>Four rather than one because the risks genuinely differ: posting to a channel you are already in is not the same act as writing to one person as you, and channel traffic is not somebody's private conversations. They are separate: granting one does not grant another. The prompt names the app and appears on the first attempt, not at install time, so you are asked at the moment it is obvious what the app wants it for. A refusal is remembered (the app does not get to ask again on a loop) and the call simply returns <code>false, "denied"</code>, which a well-written app should handle rather than break on.</p>
         <p><b>Settings &rarr; App permissions</b> lists every installed app and what it holds, and revokes with one switch. Granting happens where an app asks; that page is for review and for taking it back.</p>
