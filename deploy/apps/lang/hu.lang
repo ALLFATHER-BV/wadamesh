@@ -2486,3 +2486,6 @@ Waiting for an answer on the device.	Válaszra vár az eszközön.
 This app has no settings	Ennek az alkalmazásnak nincsenek beállításai
 Saved on the device for this app. The app reads them when it opens.	Az eszközön mentve ehhez az alkalmazáshoz. Az alkalmazás megnyitáskor olvassa be.
 Could not save to the device storage	Nem sikerült menteni az eszköz tárhelyére
+Range	Hatótáv
+Nodes farther away are left out. Auto fits the farthest node.	A távolabbi csomópontok kimaradnak. Az Auto a legtávolabbi csomóponthoz igazodik.
+Shows only the nodes you marked as favorite.	Csak a kedvencként megjelölt csomópontokat mutatja.

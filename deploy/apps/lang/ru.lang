@@ -2477,3 +2477,6 @@ Waiting for an answer on the device.	Ожидание ответа на устр
 This app has no settings	У этого приложения нет настроек
 Saved on the device for this app. The app reads them when it opens.	Сохранено на устройстве для этого приложения. Приложение читает их при открытии.
 Could not save to the device storage	Не удалось сохранить в памяти устройства
+Range	Радиус
+Nodes farther away are left out. Auto fits the farthest node.	Более дальние узлы не показываются. Авто подстраивается под самый дальний узел.
+Shows only the nodes you marked as favorite.	Показывает только узлы, отмеченные как избранные.

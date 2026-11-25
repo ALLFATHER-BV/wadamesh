@@ -955,6 +955,17 @@
   #endif
 #endif
 
+// Settings > Display > Screensaver > Range and "Favorites only": how far the
+// Constellation reaches, and whether it shows only favourite nodes. Off the Pager
+// (app slot).
+#ifndef CAP_SSAVER_FILTERS
+  #if CAP_SCREENSAVER && !defined(TLORA_PAGER)
+    #define CAP_SSAVER_FILTERS 1
+  #else
+    #define CAP_SSAVER_FILTERS 0
+  #endif
+#endif
+
 // Backups listed by their date, or "Default", instead of the file name (#739).
 #ifndef CAP_BACKUP_DATE_LABELS
   #define CAP_BACKUP_DATE_LABELS 1

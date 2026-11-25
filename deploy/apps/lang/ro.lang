@@ -2478,3 +2478,6 @@ Waiting for an answer on the device.	Se așteaptă un răspuns pe dispozitiv.
 This app has no settings	Această aplicație nu are setări
 Saved on the device for this app. The app reads them when it opens.	Salvate pe dispozitiv pentru această aplicație. Aplicația le citește la deschidere.
 Could not save to the device storage	Nu s-a putut salva în memoria dispozitivului
+Range	Rază
+Nodes farther away are left out. Auto fits the farthest node.	Nodurile mai îndepărtate sunt omise. Auto se potrivește celui mai îndepărtat nod.
+Shows only the nodes you marked as favorite.	Arată doar nodurile marcate ca favorite.

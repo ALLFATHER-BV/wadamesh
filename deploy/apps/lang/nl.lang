@@ -2475,3 +2475,6 @@ Waiting for an answer on the device.	Wachten op een antwoord op het toestel.
 This app has no settings	Deze app heeft geen instellingen
 Saved on the device for this app. The app reads them when it opens.	Op het toestel bewaard voor deze app. De app leest ze bij het openen.
 Could not save to the device storage	Kon niet opslaan in de opslag van het toestel
+Range	Bereik
+Nodes farther away are left out. Auto fits the farthest node.	Verdere nodes worden weggelaten. Auto past zich aan de verste node aan.
+Shows only the nodes you marked as favorite.	Toont alleen de nodes die je als favoriet hebt gemarkeerd.

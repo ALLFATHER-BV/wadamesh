@@ -2477,3 +2477,6 @@ Waiting for an answer on the device.	Чека се одговор на уређ�
 This app has no settings	Ова апликација нема подешавања
 Saved on the device for this app. The app reads them when it opens.	Сачувано на уређају за ову апликацију. Апликација их чита при отварању.
 Could not save to the device storage	Чување у меморију уређаја није успело
+Range	Домет
+Nodes farther away are left out. Auto fits the farthest node.	Удаљенији чворови се изостављају. Ауто се прилагођава најудаљенијем чвору.
+Shows only the nodes you marked as favorite.	Приказује само чворове означене као омиљене.

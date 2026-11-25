@@ -2489,3 +2489,6 @@ Waiting for an answer on the device.	Czekam na odpowiedź na urządzeniu.
 This app has no settings	Ta aplikacja nie ma ustawień
 Saved on the device for this app. The app reads them when it opens.	Zapisane na urządzeniu dla tej aplikacji. Aplikacja odczytuje je przy otwarciu.
 Could not save to the device storage	Nie udało się zapisać w pamięci urządzenia
+Range	Zasięg
+Nodes farther away are left out. Auto fits the farthest node.	Dalsze węzły są pomijane. Auto dopasowuje się do najdalszego węzła.
+Shows only the nodes you marked as favorite.	Pokazuje tylko węzły oznaczone jako ulubione.

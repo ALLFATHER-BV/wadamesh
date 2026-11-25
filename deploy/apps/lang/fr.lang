@@ -2476,3 +2476,6 @@ Waiting for an answer on the device.	En attente d'une réponse sur l'appareil.
 This app has no settings	Cette application n'a pas de paramètres
 Saved on the device for this app. The app reads them when it opens.	Enregistré sur l'appareil pour cette application. L'application les lit à son ouverture.
 Could not save to the device storage	Impossible d'enregistrer dans le stockage de l'appareil
+Range	Portée
+Nodes farther away are left out. Auto fits the farthest node.	Les nœuds plus éloignés sont omis. Auto s'adapte au nœud le plus éloigné.
+Shows only the nodes you marked as favorite.	Affiche uniquement les nœuds marqués comme favoris.

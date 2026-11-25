@@ -2477,3 +2477,6 @@ Waiting for an answer on the device.	Esperando una respuesta en el dispositivo.
 This app has no settings	Esta app no tiene ajustes
 Saved on the device for this app. The app reads them when it opens.	Guardado en el dispositivo para esta app. La app los lee al abrirse.
 Could not save to the device storage	No se pudo guardar en el almacenamiento del dispositivo
+Range	Alcance
+Nodes farther away are left out. Auto fits the farthest node.	Los nodos más lejanos se omiten. Auto se ajusta al nodo más lejano.
+Shows only the nodes you marked as favorite.	Muestra solo los nodos que marcaste como favoritos.

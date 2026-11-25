@@ -9052,6 +9052,19 @@ static void ssaverRequestPreview();
 #if CAP_SSAVER_NORTH_LOCK
 static void ssaverSetNorthLock(bool on);
 #endif
+#if CAP_SSAVER_FILTERS
+static void ssaverSetRange(uint8_t idx);
+static void ssaverSetFavOnly(bool on);
+// The range steps, in the distance unit the user picked (0 = Auto).
+static constexpr uint8_t kSsaverRangeSteps[4] = { 0, 5, 20, 50 };
+static bool ssaverMiles() {
+#if defined(ESP32)
+  return touchPrefsGetUseMiles();
+#else
+  return false;
+#endif
+}
+#endif
 #endif
 
 #if !defined(HAS_TANMATSU)
@@ -18991,6 +19004,19 @@ static void ssaverNorthToggleCb(lv_event_t* e) {
   ssaverSetNorthLock(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
 }
 #endif
+#if CAP_SSAVER_FILTERS
+static void ssaverRangePickCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int i = setChoiceIndex(e);
+  if (i < 0 || i > 3) return;
+  ssaverSetRange((uint8_t)i);
+  setChoicePick(lv_obj_get_parent(lv_event_get_current_target(e)), i);
+}
+static void ssaverFavToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  ssaverSetFavOnly(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+#endif
 // The battery time slider: 0..12 steps of 5 s.
 static void ssaverBattFormat(unsigned secs, char* out, size_t cap) {
   if (secs == 0)       snprintf(out, cap, "%s", TR("Off"));
@@ -20074,6 +20100,27 @@ static void buildDisplayPage() {
     s_ssaver_rows.north = setSwitchRow(c, "Keep north up",
                                        "The mesh stays put instead of slowly turning around you.",
                                        ss_north, ssaverNorthToggleCb);
+#endif
+#if CAP_SSAVER_FILTERS
+    {
+      const char* unit = ssaverMiles() ? "mi" : "km";
+      char r1[12], r2[12], r3[12];
+      snprintf(r1, sizeof r1, "%u %s", kSsaverRangeSteps[1], unit);
+      snprintf(r2, sizeof r2, "%u %s", kSsaverRangeSteps[2], unit);
+      snprintf(r3, sizeof r3, "%u %s", kSsaverRangeSteps[3], unit);
+      const char* ranges[] = { TR("Auto"), r1, r2, r3 };
+#if defined(ESP32)
+      const uint8_t ss_rng = touchPrefsGetScreensaverRange();
+      const bool    ss_fav = touchPrefsGetScreensaverFavOnly();
+#else
+      const uint8_t ss_rng = 0;
+      const bool    ss_fav = false;
+#endif
+      setChoiceRow(c, "Range", "Nodes farther away are left out. Auto fits the farthest node.",
+                   ranges, 4, ss_rng, ssaverRangePickCb);
+      setSwitchRow(c, "Favorites only", "Shows only the nodes you marked as favorite.",
+                   ss_fav, ssaverFavToggleCb);
+    }
 #endif
     s_ssaver_rows.preview = setButton(c, UI_ICON_EYE, "Preview screensaver", ssaverPreviewCb);
     ssaverRowsEnable(ss_on);
@@ -82796,6 +82843,10 @@ static bool     s_ssaver_pwr_always   = true;    // stays while external power i
 #if CAP_SSAVER_NORTH_LOCK
 static bool     s_ssaver_north_lock   = false;   // Keep north up: no slow turn (#706)
 #endif
+#if CAP_SSAVER_FILTERS
+static uint8_t  s_ssaver_range        = 0;       // 0 = Auto, 1..3 = 5 / 20 / 50 (km or mi)
+static bool     s_ssaver_fav_only     = false;   // only favourite nodes
+#endif
 static uint32_t s_ssaver_start_ms     = 0;
 static bool     s_ssaver_seen_power   = false;   // on external power at some point while showing
 static bool     s_ssaver_preview_req  = false;
@@ -82833,6 +82884,10 @@ static void ssaverLoadCfg() {
 #if CAP_SSAVER_NORTH_LOCK
   s_ssaver_north_lock = touchPrefsGetScreensaverNorthUp();
 #endif
+#if CAP_SSAVER_FILTERS
+  s_ssaver_range      = touchPrefsGetScreensaverRange();
+  s_ssaver_fav_only   = touchPrefsGetScreensaverFavOnly();
+#endif
 #endif
 }
 static void ssaverSetEnabled(bool on) {
@@ -82863,6 +82918,24 @@ static void ssaverSetNorthLock(bool on) {
   s_ssaver_north_lock = on;
 #if defined(ESP32)
   touchPrefsSetScreensaverNorthUp(on);
+#endif
+}
+#endif
+#if CAP_SSAVER_FILTERS
+static void ssaverSetRange(uint8_t idx) {
+  ssaverLoadCfg();
+  s_ssaver_range = idx;
+  s_ssaver_nodes_ms = 0;   // re-pick the nodes on the next pass
+#if defined(ESP32)
+  touchPrefsSetScreensaverRange(idx);
+#endif
+}
+static void ssaverSetFavOnly(bool on) {
+  ssaverLoadCfg();
+  s_ssaver_fav_only = on;
+  s_ssaver_nodes_ms = 0;
+#if defined(ESP32)
+  touchPrefsSetScreensaverFavOnly(on);
 #endif
 }
 #endif
@@ -82923,9 +82996,26 @@ static int ssaverBuildNodes(CstNode* out, bool& north_up) {
   int np = 0;
   const int total = the_mesh.getNumContacts();
   ContactInfo c;
+  const double my_lat = g_lv.task ? g_lv.task->getNodeLat() : 0.0;
+  const double my_lon = g_lv.task ? g_lv.task->getNodeLon() : 0.0;
+  const bool have_me = (my_lat != 0.0 || my_lon != 0.0);
+#if CAP_SSAVER_FILTERS
+  // A set range leaves out the nodes placed beyond it (a node with no position keeps
+  // its hop-count spot), and puts the outer ring at that distance instead of at the
+  // farthest node. "Favorites only" picks from the favourites alone.
+  ssaverLoadCfg();
+  const double range_km = kSsaverRangeSteps[s_ssaver_range & 3] * (ssaverMiles() ? 1.609344 : 1.0);
+#else
+  const double range_km = 0.0;
+#endif
   for (int i = 0; i < total; ++i) {
     if (!the_mesh.getContactByIdx((uint32_t)i, c)) continue;
     if (c.type == ADV_TYPE_NONE) continue;
+#if CAP_SSAVER_FILTERS
+    if (s_ssaver_fav_only && !(c.flags & 1)) continue;
+    if (range_km > 0.0 && have_me && (c.gps_lat != 0 || c.gps_lon != 0) &&
+        contactDistanceKm(my_lat, my_lon, c.gps_lat / 1e6, c.gps_lon / 1e6) > range_km) continue;
+#endif
     // Keep the kSsaverNodes most recent: insertion into a short sorted list.
     if (np == kSsaverNodes && c.lastmod <= pick[np - 1].mod) continue;
     int at = (np < kSsaverNodes) ? np++ : np - 1;
@@ -82935,9 +83025,6 @@ static int ssaverBuildNodes(CstNode* out, bool& north_up) {
 
   mesh::RTCClock* rtc = the_mesh.getRTCClock();
   const uint32_t now_epoch = rtc ? rtc->getCurrentTime() : 0;
-  const double my_lat = g_lv.task ? g_lv.task->getNodeLat() : 0.0;
-  const double my_lon = g_lv.task ? g_lv.task->getNodeLon() : 0.0;
-  const bool have_me = (my_lat != 0.0 || my_lon != 0.0);
 
   // Pass 1: positions, kinds, recency, routes; remember distances for the log scale.
   double km[kSsaverNodes];
@@ -83001,7 +83088,9 @@ static int ssaverBuildNodes(CstNode* out, bool& north_up) {
     if (k < 5 && n.level >= 2) ssaverCopyName(n.label, sizeof n.label, contactShownName(c.id.pub_key, c.name));
   }
   // Pass 2: the log scale, now that the farthest node is known. Nothing sits on
-  // top of you, and the farthest node you can place lands on the outer ring.
+  // top of you, and the farthest node you can place lands on the outer ring (or,
+  // with a range set, a node at that distance does).
+  if (range_km > 0.0) dmax = range_km;
   const double lmax = log1p(dmax);
   for (int k = 0; k < np; ++k) {
     if (!geo[k]) continue;

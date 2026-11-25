@@ -2579,6 +2579,14 @@ bool touchPrefsGetScreensaverAlwaysOnPower() { if (!s_begun) touchPrefsBegin(); 
 void touchPrefsSetScreensaverAlwaysOnPower(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ssaver_pwr", on ? 1 : 0); }
 bool touchPrefsGetScreensaverNorthUp() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("ssaver_north", 0) != 0; }
 void touchPrefsSetScreensaverNorthUp(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ssaver_north", on ? 1 : 0); }
+uint8_t touchPrefsGetScreensaverRange() {
+  if (!s_begun) touchPrefsBegin();
+  const uint8_t v = s_prefs.getUChar("ssaver_rng", 0);
+  return v > 3 ? 0 : v;
+}
+void touchPrefsSetScreensaverRange(uint8_t idx) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ssaver_rng", idx > 3 ? 0 : idx); }
+bool touchPrefsGetScreensaverFavOnly() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("ssaver_fav", 0) != 0; }
+void touchPrefsSetScreensaverFavOnly(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ssaver_fav", on ? 1 : 0); }
 bool touchPrefsGetLockPreviews() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("lock_prev", 1) != 0; }
 void touchPrefsSetLockPreviews(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("lock_prev", on ? 1 : 0); }
 bool touchPrefsGetGlanceWhenLocked() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("glance_lck", 0) != 0; }

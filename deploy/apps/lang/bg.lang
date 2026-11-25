@@ -2477,3 +2477,6 @@ Waiting for an answer on the device.	Изчакване на отговор на
 This app has no settings	Това приложение няма настройки
 Saved on the device for this app. The app reads them when it opens.	Запазени на устройството за това приложение. Приложението ги чете при отваряне.
 Could not save to the device storage	Неуспешно запазване в паметта на устройството
+Range	Обхват
+Nodes farther away are left out. Auto fits the farthest node.	По-далечните възли не се показват. Авто побира най-далечния възел.
+Shows only the nodes you marked as favorite.	Показва само възлите, отбелязани като любими.

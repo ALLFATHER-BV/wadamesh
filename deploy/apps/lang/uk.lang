@@ -2477,3 +2477,6 @@ Waiting for an answer on the device.	Очікування відповіді н�
 This app has no settings	Цей застосунок не має налаштувань
 Saved on the device for this app. The app reads them when it opens.	Збережено на пристрої для цього застосунку. Застосунок читає їх під час відкриття.
 Could not save to the device storage	Не вдалося зберегти в пам'ять пристрою
+Range	Радіус
+Nodes farther away are left out. Auto fits the farthest node.	Дальші вузли не показуються. Авто підлаштовується під найдальший вузол.
+Shows only the nodes you marked as favorite.	Показує лише вузли, позначені як обрані.

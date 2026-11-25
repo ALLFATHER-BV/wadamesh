@@ -658,6 +658,12 @@ void    touchPrefsSetScreensaverAlwaysOnPower(bool on);
 // Keep north up (#706): the Constellation does not turn. Standalone key, default off.
 bool    touchPrefsGetScreensaverNorthUp();
 void    touchPrefsSetScreensaverNorthUp(bool on);
+// The Constellation's range (0 = Auto, fits the farthest node; 1..3 = 5 / 20 / 50 in
+// the distance unit) and "Favorites only". Standalone keys, default Auto / off.
+uint8_t touchPrefsGetScreensaverRange();
+void    touchPrefsSetScreensaverRange(uint8_t idx);
+bool    touchPrefsGetScreensaverFavOnly();
+void    touchPrefsSetScreensaverFavOnly(bool on);
 bool    touchPrefsGetLockPreviews();           // message text on the lock screen's unread cards (default true)
 void    touchPrefsSetLockPreviews(bool on);
 bool    touchPrefsGetGlanceWhenLocked();       // "at a glance" also fires while manually/idle locked, not just unlocked+dimmed (default false)

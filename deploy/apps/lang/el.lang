@@ -2477,3 +2477,6 @@ Waiting for an answer on the device.	Αναμονή απάντησης στη σ
 This app has no settings	Αυτή η εφαρμογή δεν έχει ρυθμίσεις
 Saved on the device for this app. The app reads them when it opens.	Αποθηκεύτηκαν στη συσκευή για αυτή την εφαρμογή. Η εφαρμογή τις διαβάζει όταν ανοίγει.
 Could not save to the device storage	Δεν ήταν δυνατή η αποθήκευση στη μνήμη της συσκευής
+Range	Εμβέλεια
+Nodes farther away are left out. Auto fits the farthest node.	Οι πιο μακρινοί κόμβοι παραλείπονται. Το Αυτόματα χωράει τον πιο μακρινό κόμβο.
+Shows only the nodes you marked as favorite.	Εμφανίζει μόνο τους κόμβους που σημειώσατε ως αγαπημένους.
