@@ -2482,3 +2482,5 @@ Nodes farther away are left out. Auto fits the farthest node.	Los nodos más lej
 Shows only the nodes you marked as favorite.	Muestra solo los nodos que marcaste como favoritos.
 Empty at	Vacía a
 The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	El voltaje que marca 0 %. Si el dispositivo se apaga mientras aún muestra carga, elige el voltaje al que se detiene.
+Use the I2C bus and raw GPS data	Usar el bus I2C y los datos GPS en bruto
+"%s" wants to use the hardware: read and write devices on the I2C bus, and read the GPS receiver's raw data.\n\nA wrong write can change how a connected sensor behaves until it is powered off. The device's own keyboard, touch and power chips stay off limits.	"%s" quiere usar el hardware: leer y escribir dispositivos en el bus I2C y leer los datos en bruto del receptor GPS.\n\nUna escritura errónea puede cambiar el comportamiento de un sensor conectado hasta que se apague. El teclado, la pantalla táctil y los chips de alimentación del dispositivo quedan fuera de su alcance.

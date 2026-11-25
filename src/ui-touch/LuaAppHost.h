@@ -48,6 +48,7 @@ void luaAppMessage(const char* kind, const char* channel, const char* sender, co
 #define LUA_PERM_DM_SEND  4   // send a direct message, or post to a room server, AS the user
 #define LUA_PERM_DM_READ  8   // see incoming direct messages and room posts
 #define LUA_PERM_PROBE    16  // transmit discovery probes (wada.mesh.discover)
+#define LUA_PERM_HW       32  // the I2C bus and the GPS receiver's raw sentences (wada.i2c, wada.gps)
 #if CAP_LUA_SDK_EXT
 // A Home widget an app publishes with wada.widget.set{} while it runs. Home shows the
 // last one after the app has closed; it is also kept on the app's storage (<id>.wgt),

@@ -301,6 +301,10 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     // fires. TouchPrefsStore.h stated this invariant in prose; prose is what let it rot.
     static_assert(TOUCH_IGNORED_NAME_LEN >= UITask::MAX_SENDER_NAME + 1,
                   "block-list slot must hold a full sender name, or blocking silently stops working");
+    #if CAP_LUA_HW
+      #include <Wire.h>                                 // wada.i2c: the board's main bus
+      #include "../helpers/WadaNmeaLocationProvider.h"  // wada.gps.nmea: its sentence hook
+    #endif
     #include "../helpers/esp32/WebMirror.h"   // web UI mirror (framebuffer + pointer bridge)
     #include "../helpers/esp32/WebFileTransferConfig.h"
     #if WADA_WEB_FILE_TRANSFER
@@ -77740,7 +77744,7 @@ static char s_appperm_ids[12][24];
 // granted is refused outright instead of prompting, so an unrelated app silently
 // lost the ability to send with no dialog ever shown (reported on Discord).
 #define APPPERM_SHIFT 8
-static_assert(LUA_PERM_PROBE < (1 << APPPERM_SHIFT),
+static_assert(LUA_PERM_HW < (1 << APPPERM_SHIFT),
               "APPPERM_SHIFT must exceed the widest LUA_PERM_* bit");
 static void appPermsToggleCb(lv_event_t* e) {
   const intptr_t packed = (intptr_t)lv_event_get_user_data(e);
@@ -77812,6 +77816,9 @@ static void buildAppPermsSettings() {
       { TR("Send private messages as me"), LUA_PERM_DM_SEND },
       { TR("Read private messages"), LUA_PERM_DM_READ },
       { TR("Send discovery probes"), LUA_PERM_PROBE },
+#if CAP_LUA_HW
+      { TR("Use the I2C bus and raw GPS data"), LUA_PERM_HW },
+#endif
     };
     for (const auto& p : perms)   // user_data packs the app index and the bit, one callback for all
       setSwitchRow(c, p.label, nullptr, (mask & p.bit) != 0, appPermsToggleCb,
@@ -77849,6 +77856,130 @@ void luaHostRequestProbePerm(const char* app_id, const char* app_name) {
            label);
   showConfirm(msg, TR("Allow"), +[]() { luaPermSetBit(s_lua_perm_target, LUA_PERM_PROBE, true); });
 }
+
+#if CAP_LUA_HW
+// ---- wada.i2c + wada.gps.nmea (#896): an app talks to hardware ---------------
+// Its own permission: an app that reads a sensor has no business speaking as the
+// user, and one that sends messages has no business on the bus.
+//
+// The bus is the board's main I2C bus (Wire). Arduino's Wire holds its own lock for
+// a whole transaction (beginTransmission .. endTransmission, a register read's
+// repeated start included), so an app's transaction never interleaves with the
+// keyboard, touch or sensor polls, whichever task they run on. Each call is short
+// and bounded: at most 32 bytes, Wire's 50 ms timeout, and a scan that stops at
+// the first bus error or after 150 ms, so a bus with no pull-ups cannot freeze the
+// UI for the 112 addresses x 50 ms it would otherwise take.
+//
+// The board's own chips are off limits, read and write: reading a keyboard or
+// touch controller consumes its events, and a write to a charger, fuel gauge, PMU
+// or IO expander can cut power or rails. The list is the union over the supported
+// boards, so an add-on sensor that happens to share one of these addresses is
+// refused too: the safe direction.
+int luaHostHwPerm(const char* app_id) {
+  bool asked = false;
+  const int mask = luaHostAppPerms(app_id, &asked);
+  if (!asked) return 0;
+  return (mask & LUA_PERM_HW) ? 1 : -1;
+}
+void luaHostRequestHwPerm(const char* app_id, const char* app_name) {
+  if (!app_id || !*app_id) return;
+  snprintf(s_lua_perm_target, sizeof s_lua_perm_target, "%s", app_id);
+  luaPermSetBit(app_id, LUA_PERM_HW, false);   // refused unless the user says otherwise
+  const char* label = (app_name && *app_name) ? app_name : app_id;
+  static char msg[640];   // Cyrillic and Greek take two bytes a letter; static: off the loop stack
+  snprintf(msg, sizeof msg,
+           TR("\"%s\" wants to use the hardware: read and write devices on the I2C bus, "
+              "and read the GPS receiver's raw data.\n\n"
+              "A wrong write can change how a connected sensor behaves until it is "
+              "powered off. The device's own keyboard, touch and power chips stay off limits."),
+           label);
+  showConfirm(msg, TR("Allow"), +[]() { luaPermSetBit(s_lua_perm_target, LUA_PERM_HW, true); });
+}
+bool luaHostI2cReserved(uint8_t a) {
+  static const uint8_t kReserved[] = {
+    0x14, 0x5D,         // GT911 touch
+    0x15, 0x1A, 0x2E,   // CST816 / CST226 / CHSC6x touch
+    0x38,               // FT6x36 / FT5x06 touch
+    0x55,               // T-Deck keyboard, BQ27220 fuel gauge
+    0x34, 0x35,         // TCA8418 keyboard, AXP PMU
+    0x6D,               // ThinkNode M9 keyboard
+    0x6A, 0x6B,         // SY6970 / BQ25896 charger
+    0x51,               // PCF8563 / PCF85063 clock
+    0x18, 0x40,         // ES8311 / ES7210 audio
+    0x5A,               // DRV2605 haptics
+    0x28,               // BHI260 sensor hub (runs uploaded firmware)
+    0x3C, 0x3D,         // OLED displays
+  };
+  if (a < 0x08 || a > 0x77) return true;          // reserved by the I2C spec
+  if (a >= 0x20 && a <= 0x27) return true;        // IO expanders (XL9535, TCA9535, PCA9557)
+  for (uint8_t r : kReserved) if (r == a) return true;
+  return false;
+}
+int luaHostI2cScan(uint8_t* out, int cap, bool* partial) {
+  *partial = false;
+  int n = 0;
+  const uint32_t t0 = millis();
+  for (uint8_t a = 0x08; a <= 0x77; ++a) {
+    Wire.beginTransmission(a);
+    const uint8_t r = Wire.endTransmission();
+    if (r == 0) { if (n < cap) out[n++] = a; }
+    else if (r != 2) { *partial = true; break; }   // not a plain NACK: the bus itself failed
+    if ((uint32_t)(millis() - t0) > 150) { *partial = (a != 0x77); break; }
+  }
+  return n;
+}
+static const char* luaI2cErr(uint8_t r) { return r == 2 || r == 3 ? "no answer" : r == 5 ? "timeout" : "bus error"; }
+// reg < 0: a plain read with no register address written first.
+int luaHostI2cRead(uint8_t addr, int reg, uint8_t* buf, int n, const char** err) {
+  if (luaHostI2cReserved(addr)) { *err = "reserved"; return -1; }
+  if (reg >= 0) {
+    Wire.beginTransmission(addr);
+    Wire.write((uint8_t)reg);
+    const uint8_t r = Wire.endTransmission(false);   // repeated start: the lock is held into the read
+    if (r) { *err = luaI2cErr(r); return -1; }
+  }
+  const int got = (int)Wire.requestFrom((int)addr, n);
+  int i = 0;
+  while (Wire.available() && i < n) buf[i++] = (uint8_t)Wire.read();
+  while (Wire.available()) (void)Wire.read();
+  if (got <= 0 || i == 0) { *err = "no answer"; return -1; }
+  return i;
+}
+int luaHostI2cWrite(uint8_t addr, const uint8_t* buf, int n, const char** err) {
+  if (luaHostI2cReserved(addr)) { *err = "reserved"; return -1; }
+  Wire.beginTransmission(addr);
+  Wire.write(buf, (size_t)n);
+  const uint8_t r = Wire.endTransmission();
+  if (r) { *err = luaI2cErr(r); return -1; }
+  return n;
+}
+// The last few raw sentences, for wada.gps.nmea(). The copy starts the first time
+// an app asks and stops when it closes; PSRAM, 8 x 84 bytes (an NMEA sentence is at
+// most 82 characters).
+static constexpr int kLuaNmeaKeep = 8;
+static char (*s_lua_nmea)[84] = nullptr;
+static uint8_t s_lua_nmea_head = 0, s_lua_nmea_n = 0;
+static void luaNmeaTap(const char* sentence) {
+  if (!s_lua_nmea || !sentence) return;
+  snprintf(s_lua_nmea[s_lua_nmea_head], sizeof s_lua_nmea[0], "%s", sentence);
+  s_lua_nmea_head = (uint8_t)((s_lua_nmea_head + 1) % kLuaNmeaKeep);
+  if (s_lua_nmea_n < kLuaNmeaKeep) s_lua_nmea_n++;
+}
+void luaHostGpsTap(bool on) {
+  if (on && !s_lua_nmea) {
+    s_lua_nmea = (char(*)[84])psAlloc(sizeof(char[84]) * kLuaNmeaKeep);
+    if (!s_lua_nmea) return;
+  }
+  if (!on) s_lua_nmea_n = 0;
+  WadaNmeaLocationProvider::sentenceTap() = (on && s_lua_nmea) ? luaNmeaTap : nullptr;
+}
+// Oldest first: idx 0 is the oldest kept.
+int luaHostGpsNmeaCount() { return s_lua_nmea ? s_lua_nmea_n : 0; }
+const char* luaHostGpsNmeaAt(int idx) {
+  if (!s_lua_nmea || idx < 0 || idx >= s_lua_nmea_n) return nullptr;
+  return s_lua_nmea[(s_lua_nmea_head + kLuaNmeaKeep - s_lua_nmea_n + idx) % kLuaNmeaKeep];
+}
+#endif  // CAP_LUA_HW
 // A Lua ping's trace: onTracePingResult parks the answer here for the app's timer,
 // because it runs inside packet reception, where app code must not.
 static uint32_t s_lua_ping_tag = 0;

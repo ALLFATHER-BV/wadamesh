@@ -2482,3 +2482,5 @@ Nodes farther away are left out. Auto fits the farthest node.	Более дал�
 Shows only the nodes you marked as favorite.	Показывает только узлы, отмеченные как избранные.
 Empty at	Пустая при
 The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	Напряжение, которое считается 0%. Если устройство выключается, пока ещё показывает заряд, выберите напряжение, при котором оно отключается.
+Use the I2C bus and raw GPS data	Доступ к шине I2C и сырым данным GPS
+"%s" wants to use the hardware: read and write devices on the I2C bus, and read the GPS receiver's raw data.\n\nA wrong write can change how a connected sensor behaves until it is powered off. The device's own keyboard, touch and power chips stay off limits.	"%s" запрашивает доступ к оборудованию: чтение и запись устройств на шине I2C и чтение сырых данных GPS-приёмника.\n\nНеверная запись может изменить работу подключённого датчика до его выключения. Клавиатура, сенсорный экран и микросхемы питания устройства остаются недоступными.

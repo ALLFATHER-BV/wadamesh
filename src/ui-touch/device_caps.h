@@ -817,6 +817,18 @@
   #endif
 #endif
 
+// wada.i2c (scan, read, write on the board's main I2C bus) and wada.gps.nmea (the
+// receiver's raw sentences), #896. Behind their own app permission. Arduino Wire
+// builds only (not the ESP-IDF P4 / Tanmatsu builds), not on the Pager (app slot).
+#ifndef CAP_LUA_HW
+  #if CAP_LUA_SDK_EXT && defined(ESP32) && !defined(TLORA_PAGER) && !defined(HAS_TANMATSU) && \
+      !defined(HAS_TDISPLAY_P4) && !defined(HAS_CROWPANEL_P4_101)
+    #define CAP_LUA_HW 1
+  #else
+    #define CAP_LUA_HW 0
+  #endif
+#endif
+
 // wada.ui.image: an app draws a PNG / JPEG / BMP from one of its own files. Needs
 // wada.fs (the extended SDK) and the firmware's image decoders, which only ESP32
 // builds carry. Not on the T-LoRa Pager: its app slot has no room left for it.

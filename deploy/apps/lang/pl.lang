@@ -2494,3 +2494,5 @@ Nodes farther away are left out. Auto fits the farthest node.	Dalsze węzły są
 Shows only the nodes you marked as favorite.	Pokazuje tylko węzły oznaczone jako ulubione.
 Empty at	Pusta przy
 The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	Napięcie odpowiadające 0%. Jeśli urządzenie wyłącza się, choć wciąż pokazuje naładowanie, wybierz napięcie, przy którym się wyłącza.
+Use the I2C bus and raw GPS data	Używanie magistrali I2C i surowych danych GPS
+"%s" wants to use the hardware: read and write devices on the I2C bus, and read the GPS receiver's raw data.\n\nA wrong write can change how a connected sensor behaves until it is powered off. The device's own keyboard, touch and power chips stay off limits.	"%s" chce używać sprzętu: odczytywać i zapisywać urządzenia na magistrali I2C oraz odczytywać surowe dane odbiornika GPS.\n\nBłędny zapis może zmienić działanie podłączonego czujnika do czasu jego wyłączenia. Klawiatura, ekran dotykowy i układy zasilania urządzenia pozostają niedostępne.

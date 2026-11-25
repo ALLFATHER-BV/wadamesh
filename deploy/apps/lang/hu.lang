@@ -2491,3 +2491,5 @@ Nodes farther away are left out. Auto fits the farthest node.	A távolabbi csom�
 Shows only the nodes you marked as favorite.	Csak a kedvencként megjelölt csomópontokat mutatja.
 Empty at	Üres ennél
 The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	Az a feszültség, amely 0%-ot jelent. Ha az eszköz kikapcsol, miközben még töltést mutat, válaszd azt a feszültséget, amelynél leáll.
+Use the I2C bus and raw GPS data	Az I2C busz és a nyers GPS-adatok használata
+"%s" wants to use the hardware: read and write devices on the I2C bus, and read the GPS receiver's raw data.\n\nA wrong write can change how a connected sensor behaves until it is powered off. The device's own keyboard, touch and power chips stay off limits.	"%s" hozzá szeretne férni a hardverhez: eszközöket olvasni és írni az I2C buszon, és olvasni a GPS-vevő nyers adatait.\n\nEgy hibás írás megváltoztathatja egy csatlakoztatott érzékelő működését, amíg ki nem kapcsolják. Az eszköz saját billentyűzete, érintőképernyője és tápellátási chipjei elérhetetlenek maradnak.
