@@ -55,5 +55,32 @@ int main() {
   a.ensure();  // next session gets a fresh code and no leftover lockout
   assert(a.code() == 100000u + 777777u % 900000u);
   assert(a.allowed());
+
+  // Fixed code (#837)
+  WebAuthCode f;
+  f.setFixed(42);  // while disarmed: nothing armed yet
+  assert(f.code() == 0);
+  f.ensure();
+  assert(f.code() == 42u);
+  assert(tryCode(f, "000042"));
+  f.disarm();
+  g_rand = 555;
+  f.ensure();  // every session gets the same code
+  assert(f.code() == 42u);
+
+  f.noteFailure();
+  f.noteFailure();
+  f.noteFailure();
+  assert(!f.allowed());
+  f.setFixed(654321);  // changing it mid-session swaps the live code and clears the lockout
+  assert(f.code() == 654321u);
+  assert(f.allowed());
+  assert(!tryCode(f, "000042"));
+  assert(tryCode(f, "654321"));
+
+  f.setFixed(0);  // back to random
+  assert(f.code() == 100000u + 555u % 900000u);
+  f.setFixed(1000000);  // out of range = random
+  assert(f.fixedCode() == 0);
   return 0;
 }

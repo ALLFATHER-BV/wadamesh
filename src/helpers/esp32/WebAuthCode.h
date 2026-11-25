@@ -15,14 +15,26 @@
 // first WebSocket text frame "AUTH nnnnnn"; 3 wrong tries lock everyone out
 // for 30 s. The code is created when the first feature turns on and dropped
 // when the last one turns off, so enabling a second feature never rotates it.
+// A fixed code (#837, saved by the UI) replaces the random one for every session.
 class WebAuthCode {
 public:
+  static constexpr uint32_t kMaxCode = 999999u;
+
   void ensure() {
     if (_code != 0) return;
     _failures = 0;
     _blocked_until_ms = 0;
-    _code = 100000u + esp_random() % 900000u;
+    _code = _fixed ? _fixed : 100000u + esp_random() % 900000u;
   }
+  // 0 = random per session. 000000 can't be fixed: a zero code means "disarmed".
+  // Applies at once to a session in progress, so the code shown is the code that works.
+  void setFixed(uint32_t code) {
+    _fixed = code <= kMaxCode ? code : 0;
+    if (_code == 0) return;
+    _code = 0;
+    ensure();
+  }
+  uint32_t fixedCode() const { return _fixed; }
   void disarm() {
     _code = 0;
     _failures = 0;
@@ -56,6 +68,7 @@ public:
 
 private:
   volatile uint32_t _code = 0;
+  volatile uint32_t _fixed = 0;
   volatile uint32_t _blocked_until_ms = 0;
   volatile uint8_t _failures = 0;
 };

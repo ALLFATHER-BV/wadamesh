@@ -106,6 +106,9 @@ bool touchPrefsGetRemoteLandscape();
 bool touchPrefsSetRemoteLandscape(bool on);
 bool touchPrefsGetWebTerminal();
 bool touchPrefsSetWebTerminal(bool on);
+/** Fixed browser code for the web features (#837): 0 = a new random code each session. */
+uint32_t touchPrefsGetWebFixedCode();
+void     touchPrefsSetWebFixedCode(uint32_t code);
 
 /** Web console "Always allow" browsers: an opaque blob (identity-tagged WebTrustedEntry
  *  records, see webTrustSave in UITask.cpp). Get returns the bytes read (0 = none); Set
