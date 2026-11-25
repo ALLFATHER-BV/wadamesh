@@ -41599,7 +41599,9 @@ static void freeMapMarkers() {
 // ---- Traffic pulses (#827) ------------------------------------------------------
 // A message or ACK leaving or arriving shows as a dot running along the line between
 // us and that contact for about a second; channel traffic, and a contact with no
-// position, shows as a ring spreading out from our own marker. Only while the map is
+// position, shows as a ring spreading out from our own marker. With no position of our
+// own (no fix yet, none set by hand) the ring spreads from the contact's marker instead,
+// so traffic still shows on a node that has never had a position. Only while the map is
 // on screen and animations are on. Endpoints are kept as lat/lon and re-projected
 // every frame against the centre the markers were last drawn for, so a pan or zoom
 // mid-pulse keeps it on its line.
@@ -41609,6 +41611,7 @@ struct MapPulse {
   lv_obj_t* obj;
   int32_t   lat_e6, lon_e6;   // the contact's end (unused for a ring)
   bool      ring;
+  bool      at_contact;       // a ring around the contact (we have no position)
   bool      inbound;          // the dot runs contact -> self
   uint32_t  born;
 };
@@ -41641,7 +41644,11 @@ static void mapPulseAnimCb(void* var, int32_t v) {   // v: 0..1000
   MapPulse* p = static_cast<MapPulse*>(lv_obj_get_user_data(o));
   if (!p || p->obj != o || !g_lv.task) return;
   int ssx, ssy;
-  if (!mapPulseScreenPt(g_lv.task->getNodeLat(), g_lv.task->getNodeLon(), &ssx, &ssy)) return;
+  if (p->at_contact) {
+    if (!mapPulseScreenPt(p->lat_e6 / 1.0e6, p->lon_e6 / 1.0e6, &ssx, &ssy)) return;
+  } else if (!mapPulseScreenPt(g_lv.task->getNodeLat(), g_lv.task->getNodeLon(), &ssx, &ssy)) {
+    return;
+  }
   // Fade over the last third.
   const int32_t opa = v < 667 ? 255 : (255 * (1000 - v)) / 333;
   if (p->ring) {
@@ -41668,8 +41675,7 @@ static void mapPulseDoneCb(lv_anim_t* a) {
 static void mapPulse(const uint8_t* pub, MapPulseKind kind) {
   if (s_ui_muted || !s_map_pan_layer || !s_map_pulse_have_centre || !g_lv.task) return;
   if (g_lv.task->isScreenOff() || getActiveTab() != MAP_TAB_INDEX) return;
-  const double self_lat = g_lv.task->getNodeLat(), self_lon = g_lv.task->getNodeLon();
-  if (self_lat == 0.0 && self_lon == 0.0) return;   // nothing to draw from
+  const bool self_has = g_lv.task->getNodeLat() != 0.0 || g_lv.task->getNodeLon() != 0.0;
 
   MapPulse np = {};
   np.ring = true;
@@ -41681,6 +41687,11 @@ static void mapPulse(const uint8_t* pub, MapPulseKind kind) {
       np.lat_e6 = c->gps_lat;
       np.lon_e6 = c->gps_lon;
     }
+  }
+  if (!self_has) {
+    if (np.ring) return;   // neither end on the map: nothing to draw from
+    np.ring = true;        // no line without us: a ring around the contact
+    np.at_contact = true;
   }
 
   MapPulse* slot = nullptr;

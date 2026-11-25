@@ -60,6 +60,7 @@ class WadaNmeaLocationProvider : public LocationProvider {
   bool _keep_choice = false;
   bool _ubx_standby = false;      // rest in software standby (setUbxStandby)
   uint8_t _wake_tries = 0;
+  uint8_t _start_confirms = 0;    // starts still to repeat after begin(), sentences or not
   uint32_t _wake_check_ms = 0;    // when begin() looks for the stream again (0: not waiting)
   uint32_t _valid_sentences = 0;  // checksummed sentences since boot (the GPS page shows them)
   uint32_t _last_valid_ms = 0;    // millis() of the last one (0: none yet)
@@ -69,6 +70,7 @@ class WadaNmeaLocationProvider : public LocationProvider {
   static const unsigned long WAKE_CHECK_MS = 1500;
   static const unsigned long WAKE_SLOW_MS = 30000;
   static const uint8_t WAKE_FAST_TRIES = 5;
+  static const uint8_t START_CONFIRMS = 2;
 
   void nudgeReceiver() {
     if (!_probe_serial) return;
@@ -105,11 +107,11 @@ class WadaNmeaLocationProvider : public LocationProvider {
     }
   }
 
-  // A receiver without an enable line keeps its power when "stopped". A u-blox one (the
-  // T-Deck Plus) is told to stop and restart its GNSS engine instead (UBX-CFG-RST,
-  // controlled GNSS stop / start): it keeps everything it knows, so the next fix is a hot
-  // start, and it draws a fraction of its tracking current meanwhile. Receivers that do
-  // not speak UBX ignore the binary message.
+  // A receiver without an enable line keeps its power when "stopped". A u-blox one is told
+  // to stop and restart its GNSS engine instead (UBX-CFG-RST, controlled GNSS stop / start),
+  // or to rest in software standby (setUbxStandby: the T-Deck Plus and the Pager): it keeps
+  // everything it knows, so the next fix is a hot start, and it draws a fraction of its
+  // tracking current meanwhile. Receivers that do not speak UBX ignore the binary message.
   void ubxGnss(bool run) {
     static const uint8_t kStop[]  = { 0xB5, 0x62, 0x06, 0x04, 0x04, 0x00, 0x00, 0x00, 0x08, 0x00, 0x16, 0x74 };
     static const uint8_t kStart[] = { 0xB5, 0x62, 0x06, 0x04, 0x04, 0x00, 0x00, 0x00, 0x09, 0x00, 0x17, 0x76 };
@@ -249,6 +251,10 @@ public:
     // can drop a start that follows too closely. A stopped receiver sends nothing, so it
     // would stay silent until the next restart of the GPS (#778). loop() repeats the nudge
     // and the start until sentences flow again.
+    // Sentences are no proof the start was heard either: a u-blox whose GNSS engine is
+    // stopped can go on sending empty sentences, which read as "talking" but never carry a
+    // fix (#778 on beta_103 and beta_106). So the first repeats go out whatever arrives.
+    _start_confirms = _pin_en == -1 ? START_CONFIRMS : 0;
     _wake_tries = 0;
     _wake_check_ms = _pin_en == -1 ? millis() + WAKE_CHECK_MS : 0;
   }
@@ -366,14 +372,19 @@ public:
     if (_wake_check_ms && (int32_t)(millis() - _wake_check_ms) >= 0) {
       // A sentence from inside this last window, not any byte: the tail of what a stopping
       // receiver sent is still in the UART when the start goes out.
-      if (_last_valid_ms && millis() - _last_valid_ms < WAKE_CHECK_MS) {
+      const bool flowing = _last_valid_ms && millis() - _last_valid_ms < WAKE_CHECK_MS;
+      if (flowing && !_start_confirms) {
         // Flowing, but keep watching: a receiver still finishing an earlier stop goes on
         // sending for a moment after the start, then falls silent for good.
         _wake_tries = 0;
         _wake_check_ms = millis() + WAKE_SLOW_MS;
       } else {
-        const bool fast = _wake_tries < WAKE_FAST_TRIES;
-        if (fast) _wake_tries++;
+        bool fast = true;
+        if (_start_confirms) _start_confirms--;
+        if (!flowing) {
+          fast = _wake_tries < WAKE_FAST_TRIES;
+          if (fast) _wake_tries++;
+        }
         nudgeReceiver();
         ubxGnss(true);
         _wake_check_ms = millis() + (fast ? WAKE_CHECK_MS : WAKE_SLOW_MS);
