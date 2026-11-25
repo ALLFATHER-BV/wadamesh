@@ -12,10 +12,16 @@ awk '
   /^static bool chatFirstUrl/ {url=0}
   /^static bool chatHashtagSpan/ {tag=1}
   /^\/\/ ---- QR popup/ {tag=0}
+  /^static bool emojiIconVisible/ {avatar=1}
+  /^static void glyphAvatarSetEmoji/ {avatar=0}
+  /^static bool nameFirstEmoji/ {emoji=1}
+  /^\/\/ E-paper badges/ {emoji=0}
+  /^static void chatContactCardSetAvatarContent/ {card=1}
+  /^static void chatCreateContactCard/ {card=0}
   /^enum ChatLinkKind/ {print}
   /^struct ChatLinkChoice/ {render=1}
   /^static constexpr int CHAT_LINK_CHOICE_MAX/ {render=0}
-  coord || url || tag || render {print}
+  coord || url || tag || render || avatar || emoji || card {print}
 ' "$ROOT/src/ui-touch/UITask.cpp" > "$OUT/implementation.inc"
 cd "$OUT"
 find "$LVGL/src" -name '*.c' -print0 | xargs -0 -n 40 "${CC:-cc}" -w -c "${FLAGS[@]}"

@@ -1,6 +1,7 @@
 #include "UITask.h"
 #include "TouchSleep.h"
 #include "ChatHashtag.h"
+#include "ChatContactTuple.h"
 #include <climits>         // INT_MAX (glibc does not pull it in transitively, macOS/ESP-IDF do)
 
 #if defined(WADA_WEB)
@@ -5788,6 +5789,16 @@ static bool emojiIconVisible(uint32_t cp, void*) {
   const lv_img_dsc_t* d = emojiLookupAny(cp);
   return d && d->header.w > 2;
 }
+static void avatarAddEmojiImage(lv_obj_t* av, const lv_img_dsc_t* emoji, bool scale_to_avatar) {
+  lv_obj_t* im = lv_img_create(av);
+  lv_obj_clear_flag(im, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_img_set_src(im, emoji);
+  const lv_coord_t sz = lv_obj_get_style_width(av, LV_PART_MAIN);
+  const lv_coord_t px = scale_to_avatar ? LV_MAX((lv_coord_t)16, (lv_coord_t)(sz * 16 / 28)) : 16;
+  lv_img_set_zoom(im, (uint16_t)(256 * px / 16));
+  lv_img_set_antialias(im, px != 16);
+  lv_obj_center(im);
+}
 static void glyphAvatarSetEmoji(lv_obj_t* av, const char* name, const char* utf8) {
   if (!av) return;
   const lv_img_dsc_t* eg = nullptr;
@@ -5824,14 +5835,7 @@ static void glyphAvatarSetEmoji(lv_obj_t* av, const char* name, const char* utf8
   }
   lv_obj_clean(av);                    // no letters
   lv_obj_set_user_data(av, nullptr);   // no glyph under it
-  lv_obj_t* im = lv_img_create(av);
-  lv_obj_clear_flag(im, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-  lv_img_set_src(im, eg);
-  const lv_coord_t sz = lv_obj_get_style_width(av, LV_PART_MAIN);
-  const lv_coord_t px = LV_MAX((lv_coord_t)16, (lv_coord_t)(sz * 16 / 28));
-  lv_img_set_zoom(im, (uint16_t)(256 * px / 16));
-  lv_img_set_antialias(im, px != 16);
-  lv_obj_center(im);
+  avatarAddEmojiImage(av, eg, true);
   lv_obj_invalidate(av);
 }
 // A contact's chat icon when none was picked: the first emoji in its name that has a
@@ -47023,9 +47027,10 @@ static void msgMenuInfoCb(lv_event_t* e) {
   openMessageInfoPopup(idx);
 }
 
-enum ChatLinkKind : uint8_t { CHAT_LINK_URL, CHAT_LINK_HASHTAG, CHAT_LINK_COORD };
+enum ChatLinkKind : uint8_t { CHAT_LINK_URL, CHAT_LINK_HASHTAG, CHAT_LINK_COORD, CHAT_LINK_CONTACT };
 static int messageMenuLinkCount(const char* text, ChatLinkKind kind);
 static void messageMenuLinkCb(lv_event_t* e);
+static void openChatContactTuple(const char* tuple);
 
 // The Pager types only into the field that holds the nav focus. Closing the action
 // menu hands the focus back to the bubble it was opened on, so after Ack / Mention
@@ -47223,6 +47228,7 @@ static void openMessageActionMenu(int msg_idx) {
   const bool can_web = messageMenuLinkCount(s_msg_menu_text, CHAT_LINK_URL) > 0;
   const bool can_channel = messageMenuLinkCount(s_msg_menu_text, CHAT_LINK_HASHTAG) > 0;
   const bool can_map = messageMenuLinkCount(s_msg_menu_text, CHAT_LINK_COORD) > 0;
+  const bool can_contact = messageMenuLinkCount(s_msg_menu_text, CHAT_LINK_CONTACT) > 0;
 
   lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -47262,7 +47268,7 @@ static void openMessageActionMenu(int msg_idx) {
   // Header row reserves space for the close-X badge so it doesn't sit on a button.
   const int hdr_h  = 24;
 #endif
-  const int nbtn   = (can_ack ? 1 : 0) + (can_mention ? 1 : 0) + (can_web ? 1 : 0) + (can_channel ? 1 : 0) + (can_map ? 1 : 0) + 3 /*Copy+Info+Delete*/ + (can_block ? 1 : 0) + (can_resend ? 1 : 0);
+  const int nbtn   = (can_ack ? 1 : 0) + (can_mention ? 1 : 0) + (can_web ? 1 : 0) + (can_channel ? 1 : 0) + (can_map ? 1 : 0) + (can_contact ? 1 : 0) + 3 /*Copy+Info+Delete*/ + (can_block ? 1 : 0) + (can_resend ? 1 : 0);
   const int nrows  = (nbtn + 1) / 2;
   int card_h = hdr_h + nrows * btn_h + (nrows - 1) * gap + 2 * pad;
   // Never exceed the visible area under the status bar; scroll if it ever would
@@ -47341,6 +47347,7 @@ static void openMessageActionMenu(int msg_idx) {
   if (can_map) mk_link_btn(LV_SYMBOL_GPS, TR("Map"), CHAT_LINK_COORD);
   if (can_web) mk_link_btn(LV_SYMBOL_WIFI, TR("Web"), CHAT_LINK_URL);
   if (can_channel) mk_link_btn("#", TR("Channel"), CHAT_LINK_HASHTAG);
+  if (can_contact) mk_link_btn(LV_SYMBOL_PLUS, TR("Contact"), CHAT_LINK_CONTACT);
   mk_btn(LV_SYMBOL_LIST, TR(LV_SYMBOL_LIST "  Info"), msgMenuInfoCb);
   if (can_block)  mk_btn(LV_SYMBOL_CLOSE, TR(LV_SYMBOL_CLOSE "  Block"), msgMenuBlockCb);
   if (can_resend) mk_btn(LV_SYMBOL_REFRESH, TR(LV_SYMBOL_REFRESH "  Resend"), msgMenuResendCb);
@@ -47858,6 +47865,12 @@ static constexpr lv_coord_t  kChatCompactRowGap = 4;
 static constexpr lv_coord_t  kChatCompactPadV   = 1;
 #endif
 static constexpr lv_coord_t  kChatDividerH       = 16;
+static constexpr size_t kChatContactTupleMax =
+    UITask::MAX_MSG_TEXT / (ChatContactTuple::PUBLIC_KEY_HEX_LENGTH + 6) + 1;
+static_assert(kChatContactTupleMax <= 3, "Update the chat contact card storage");
+static_assert(UITask::MAX_MSG_TEXT <
+                  (ChatContactTuple::PUBLIC_KEY_HEX_LENGTH + 6) * kChatContactTupleMax,
+              "Update the chat contact card capacity");
 
 static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool channel_mode,
                                           bool thread_is_room, lv_coord_t bubble_max_w);
@@ -47877,6 +47890,7 @@ struct ChatBubbleDisplay {
   char retro_sender[UITask::MAX_SENDER_NAME + 1];
   char san_sender[UITask::MAX_SENDER_NAME + 8];
   char san_text[UITask::MAX_MSG_TEXT + 8];
+  size_t contact_count = 0;
 };
 
 struct ChatVirtLayout {
@@ -48245,7 +48259,11 @@ static void chatParseMessageDisplay(const UITask::UIMessage& m, bool channel_mod
   // identity) stays the name it advertises.
   copyUtf8ReplacingMissingGlyphs(&g_font_12, d.san_sender, sizeof(d.san_sender),
                                  m.outgoing ? d.show_sender : senderShownName(d.show_sender));
-  copyUtf8ReplacingMissingGlyphs(chatMessageFont(), d.san_text, sizeof(d.san_text), d.show_text);
+  char text_without_contacts[UITask::MAX_MSG_TEXT + 1];
+  snprintf(text_without_contacts, sizeof(text_without_contacts), "%s", d.show_text);
+  d.contact_count = ChatContactTuple::extractAndRemove(text_without_contacts);
+  copyUtf8ReplacingMissingGlyphs(chatMessageFont(), d.san_text, sizeof(d.san_text),
+                                 text_without_contacts);
 }
 
 // ---- Chat virt serial diagnostics -------------------------------------------
@@ -48500,6 +48518,27 @@ static lv_coord_t chatFootChainW(const ChatFoot& f) {
   return (lv_coord_t)(n - 1) * chatFootDotStep() + SC(5) + 6;
 }
 
+static lv_coord_t chatContactCardHeight() {
+  return 2 * SC(8) + SC(38);
+}
+
+static lv_coord_t chatContactCardGap() {
+  return SC(8);
+}
+
+static lv_coord_t chatContactCardWidth(lv_coord_t inner_max_w) {
+  return LV_MIN(inner_max_w, PCW(320));
+}
+
+static lv_coord_t chatContactContentHeight(size_t contact_count, lv_coord_t text_height) {
+  if (!contact_count) return text_height;
+  lv_coord_t height = text_height;
+  if (height > 0) height += chatContactCardGap();
+  height += (lv_coord_t)contact_count * chatContactCardHeight();
+  height += (lv_coord_t)(contact_count - 1) * chatContactCardGap();
+  return height;
+}
+
 // The chain: one dot per hop joined by a line; for your own message a lit dot for
 // you and one per repeater heard.
 static void chatFootChainDrawCb(lv_event_t* e) {
@@ -48547,14 +48586,18 @@ static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool chann
   lv_coord_t inner_y = show_sender ? lv_font_get_line_height(&g_font_semi_12) : 0;
 
   const lv_font_t* msg_font = chatMessageFont();
-  lv_point_t txt_size;
-  lv_txt_get_size(&txt_size, d.san_text, msg_font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  lv_point_t txt_size{};
+  if (d.san_text[0])
+    lv_txt_get_size(&txt_size, d.san_text, msg_font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
   const lv_coord_t txt_w_used = (txt_size.x <= inner_max_w) ? txt_size.x : inner_max_w;
-  lv_point_t wrapped_size;
-  lv_txt_get_size(&wrapped_size, d.san_text, msg_font, 0, 0,
-                  txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  lv_point_t wrapped_size{};
+  if (d.san_text[0])
+    lv_txt_get_size(&wrapped_size, d.san_text, msg_font, 0, 0,
+                    txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  const lv_coord_t content_h = chatContactContentHeight(d.contact_count, wrapped_size.y);
 
-  return kChatBubblePadV * 2 + inner_y + wrapped_size.y + kChatFootGap + lv_font_get_line_height(&g_font_12);
+  return kChatBubblePadV * 2 + inner_y + content_h + kChatFootGap +
+         lv_font_get_line_height(&g_font_12);
 }
 
 static void chatBuildCompactLine(const UITask::UIMessage& m, LvChatPanel* p, int logical_i,
@@ -48706,7 +48749,7 @@ static lv_coord_t chatMeasureMessageRowHeight(const UITask::UIMessage& m, LvChat
   if (s_chat_virt.compact_chat) {
     ChatBubbleDisplay d{};
     chatParseMessageDisplay(m, p->channel_mode, s_chat_virt.thread_is_room, d);
-    return chatMeasureCompactRowHeight(m, p, logical_i, d);
+    if (!d.contact_count) return chatMeasureCompactRowHeight(m, p, logical_i, d);
   }
   return chatMeasureBubbleHeight(m, p->channel_mode, s_chat_virt.thread_is_room,
                                  s_chat_virt.bubble_max_w);
@@ -49129,6 +49172,31 @@ static bool chatFirstUrl(const char* s, char* out, int cap) {
 static bool chatHashtagSpan(const char* text, int from, int* start, int* end) {
   return ChatHashtag::span(text, from, start, end);
 }
+static bool chatContactTupleSpan(const char* text, int from, int* start, int* end) {
+  if (!text || from < 0 || !start || !end) return false;
+  const size_t length = strlen(text);
+  size_t tuple_start = 0;
+  ChatContactTuple::Contact tuple{};
+  if (!ChatContactTuple::span(text, length, (size_t)from, &tuple_start, &tuple))
+    return false;
+  *start = (int)tuple_start;
+  *end = (int)tuple.end;
+  return true;
+}
+static bool chatContactLinkSpan(const char* text, int from, int* start, int* end) {
+  return chatContactTupleSpan(text, from, start, end);
+}
+static int chatContactLinkOrdinal(const char* text, int target_start) {
+  int count = 0;
+  for (int from = 0; from < target_start;) {
+    int start = 0, end = 0;
+    if (!chatContactTupleSpan(text, from, &start, &end) || start >= target_start)
+      break;
+    from = end;
+    ++count;
+  }
+  return count;
+}
 // ---- QR popup: a scannable QR of a URL ----
 static lv_obj_t* s_urlqr_root = nullptr;
 static void closeUrlQr() { if (s_urlqr_root) popupClose(&s_urlqr_root); }
@@ -49286,6 +49354,33 @@ static void bubbleCoordTapCb(lv_event_t* e) {
   double lat = 0.0, lon = 0.0;
   if (chatFirstCoord(m.text, &lat, &lon)) openMapAtCoords(lat, lon);
 }
+static void openMessageContactTuple(int idx, int target_ordinal) {
+  if (!g_lv.task || target_ordinal < 0) return;
+  UITask::UIMessage m;
+  if (!g_lv.task->getMessageByIndex(idx, m)) return;
+  const size_t length = strlen(m.text);
+  size_t from = 0;
+  for (int ordinal = 0;; ++ordinal) {
+    size_t start = 0;
+    ChatContactTuple::Contact tuple{};
+    if (!ChatContactTuple::span(m.text, length, from, &start, &tuple)) return;
+    if (ordinal == target_ordinal) {
+      char value[UITask::MAX_MSG_TEXT + 1];
+      const size_t tuple_length = tuple.end - start;
+      if (tuple_length >= sizeof value) return;
+      memcpy(value, m.text + start, tuple_length);
+      value[tuple_length] = '\0';
+      openChatContactTuple(value);
+      return;
+    }
+    from = tuple.end;
+  }
+}
+
+static void bubbleContactTupleTapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED) return;
+  openMessageContactTuple((int)(intptr_t)lv_event_get_user_data(e), 0);
+}
 
 struct ChatLinkChoice {
   ChatLinkKind kind;
@@ -49293,6 +49388,7 @@ struct ChatLinkChoice {
   int end;
   double lat;
   double lon;
+  int contact_ordinal;
 };
 
 static bool nextChatLinkChoice(const char* text, int from, ChatLinkChoice* next) {
@@ -49300,11 +49396,13 @@ static bool nextChatLinkChoice(const char* text, int from, ChatLinkChoice* next)
   int url_start = 0, url_end = 0;
   int tag_start = 0, tag_end = 0;
   int coord_start = 0, coord_end = 0;
+  int contact_start = 0, contact_end = 0;
   double lat = 0.0, lon = 0.0;
   const bool has_url = chatUrlSpan(text, from, &url_start, &url_end);
   const bool has_tag = chatHashtagSpan(text, from, &tag_start, &tag_end);
   const bool has_coord = chatCoordSpan(text, from, &coord_start, &coord_end, &lat, &lon);
-  if (!has_url && !has_tag && !has_coord) return false;
+  const bool has_contact = chatContactLinkSpan(text, from, &contact_start, &contact_end);
+  if (!has_url && !has_tag && !has_coord && !has_contact) return false;
 
   next->start = INT_MAX;
   if (has_url && url_start < next->start)
@@ -49313,6 +49411,9 @@ static bool nextChatLinkChoice(const char* text, int from, ChatLinkChoice* next)
     *next = { CHAT_LINK_HASHTAG, tag_start, tag_end, 0.0, 0.0 };
   if (has_coord && coord_start < next->start)
     *next = { CHAT_LINK_COORD, coord_start, coord_end, lat, lon };
+  if (has_contact && contact_start < next->start)
+    *next = { CHAT_LINK_CONTACT, contact_start, contact_end, 0.0, 0.0,
+              chatContactLinkOrdinal(text, contact_start) };
   return next->start != INT_MAX && next->end > from;
 }
 
@@ -49487,6 +49588,7 @@ static void activateChatLinkChoice(int index) {
     case CHAT_LINK_URL: openUrlMenu(value); break;
     case CHAT_LINK_HASHTAG: openHashtagChat(value); break;
     case CHAT_LINK_COORD: openMapAtCoords(choice.lat, choice.lon); break;
+    case CHAT_LINK_CONTACT: openChatContactTuple(value); break;
   }
 }
 
@@ -49548,6 +49650,7 @@ static void bubbleChatLinkTapCb(lv_event_t* e) {
   const char* label_text = lv_label_get_text(label);
   const uint32_t char_idx = lv_label_get_letter_on(label, &point);
   const int byte_idx = (int)_lv_txt_encoded_get_byte_id(label_text, char_idx);
+  const int message_idx = (int)(intptr_t)lv_event_get_user_data(e);
   ChatLinkChoice choice{};
   for (int from = 0; nextChatLinkChoice(label_text, from, &choice); from = choice.end) {
     if (byte_idx < choice.start || byte_idx >= choice.end) continue;
@@ -49555,12 +49658,16 @@ static void bubbleChatLinkTapCb(lv_event_t* e) {
       openMapAtCoords(choice.lat, choice.lon);
       return;
     }
+    if (choice.kind == CHAT_LINK_CONTACT) {
+      openMessageContactTuple(message_idx, choice.contact_ordinal);
+      return;
+    }
     char value[UITask::MAX_MSG_TEXT + 1];
     const int len = choice.end - choice.start;
     memcpy(value, label_text + choice.start, len);
     value[len] = '\0';
     if (choice.kind == CHAT_LINK_URL) openUrlMenu(value);
-    else openHashtagChat(value);
+    else if (choice.kind == CHAT_LINK_HASHTAG) openHashtagChat(value);
     return;
   }
 }
@@ -49580,7 +49687,9 @@ static void openChatLinkPicker(const char* text, ChatLinkKind kind) {
   lv_coord_t card_w = PCW(230);
   if (card_w > modalAvailW()) card_w = modalAvailW();
   const char* title_text = kind == CHAT_LINK_HASHTAG ? TR("Channel")
-                           : kind == CHAT_LINK_URL ? TR("Web") : TR("Map");
+                           : kind == CHAT_LINK_URL ? TR("Web")
+                           : kind == CHAT_LINK_CONTACT ? TR("Contact")
+                           : TR("Map");
   const lv_coord_t title_w = card_w - SC(62);
   lv_point_t title_size;
   lv_txt_get_size(&title_size, title_text, &g_font_semi_16, 0, 0, title_w, LV_TEXT_FLAG_NONE);
@@ -49653,6 +49762,240 @@ static void openChatLinkPicker(const char* text, ChatLinkKind kind) {
   lv_obj_move_foreground(s_chat_link_picker);
 }
 
+static lv_obj_t* s_chat_contact_tuple_popup = nullptr;
+static ChatContactTuple::Contact s_chat_contact_tuple{};
+
+static void closeChatContactTuplePopup() {
+  if (s_chat_contact_tuple_popup) popupClose(&s_chat_contact_tuple_popup);
+}
+
+static void addChatContactTuple(const ChatContactTuple::Contact& contact) {
+  const uint8_t* pub_key = contact.public_key;
+  if (the_mesh.lookupContactByPubKey(pub_key, PUB_KEY_SIZE)) {
+    closeChatContactTuplePopup();
+    if (g_lv.task) g_lv.task->showAlert(TR("Already in contacts"), 1400);
+    return;
+  }
+  if (the_mesh.getNumContacts() >= MAX_CONTACTS) {
+    closeChatContactTuplePopup();
+    if (g_lv.task) g_lv.task->showAlert(TR("Contacts full"), 1400);
+    return;
+  }
+  if (!the_mesh.uiAddDiscoveredContact(pub_key, contact.type, contact.name)) {
+    closeChatContactTuplePopup();
+    if (g_lv.task) g_lv.task->showAlert(TR("Could not add contact"), 1400);
+    return;
+  }
+  closeChatContactTuplePopup();
+  if (g_lv.task) g_lv.task->showAlert(TR("Contact added"), 1200);
+  refreshContactsList();
+}
+
+static void bubbleContactCardTapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const intptr_t packed = reinterpret_cast<intptr_t>(lv_event_get_user_data(e));
+  openMessageContactTuple(static_cast<int>(packed >> 2), static_cast<int>(packed & 0x3));
+}
+
+static void chatContactTupleBackdropCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED ||
+      lv_event_get_target(e) != lv_event_get_current_target(e)) return;
+  closeChatContactTuplePopup();
+}
+
+static void chatContactTupleAddCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  addChatContactTuple(s_chat_contact_tuple);
+}
+
+static void openChatContactTuple(const char* text) {
+  if (!text) return;
+  ChatContactTuple::Contact parsed{};
+  const size_t length = strlen(text);
+  if (!ChatContactTuple::parseAt(text, length, 0, &parsed) || parsed.end != length)
+    return;
+  s_chat_contact_tuple = parsed;
+  closeChatContactTuplePopup();
+
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  const lv_coord_t pad = PSC(12);
+  const lv_coord_t card_w = LV_MIN(PCW(250), modalAvailW());
+  const lv_coord_t card_h = LV_MIN(PSC(220), modalAvailH());
+  const lv_coord_t button_h = PSC(32);
+  const lv_coord_t button_y = card_h - pad - button_h;
+  const lv_coord_t key_y = pad + PSC(76);
+  const lv_coord_t key_h = LV_MAX(PSC(20), button_y - key_y - PSC(8));
+
+  s_chat_contact_tuple_popup = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_chat_contact_tuple_popup);
+  lv_obj_set_size(s_chat_contact_tuple_popup, sw, sh);
+  lv_obj_set_style_bg_color(s_chat_contact_tuple_popup, lv_color_black(), LV_PART_MAIN);
+  styleScrim(s_chat_contact_tuple_popup, LV_OPA_60);
+  lv_obj_add_flag(s_chat_contact_tuple_popup, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(s_chat_contact_tuple_popup, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(s_chat_contact_tuple_popup, chatContactTupleBackdropCb,
+                      LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* card = lv_obj_create(s_chat_contact_tuple_popup);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, card_w, card_h);
+  lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+  styleSurface(card, COLOR_PANEL, 8);
+  lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
+  lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* title = lv_label_create(card);
+  lv_label_set_text(title, TR("Add contact"));
+  lv_obj_set_style_text_font(title, &g_font_semi_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(title, pad, pad);
+  lv_obj_set_width(title, card_w - 2 * pad - PSC(30));
+  addCloseXBadge(card, [](lv_event_t*) { closeChatContactTuplePopup(); });
+
+  lv_obj_t* name = lv_label_create(card);
+  lv_label_set_text(name, s_chat_contact_tuple.name);
+  lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(name, card_w - 2 * pad);
+  lv_obj_set_style_text_font(name, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(name, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(name, pad, pad + PSC(26));
+
+  const char* type_name = s_chat_contact_tuple.type == 1 ? TR("Companion")
+                        : s_chat_contact_tuple.type == 2 ? TR("Repeater")
+                        : s_chat_contact_tuple.type == 3 ? TR("Room")
+                        : TR("Sensor");
+  lv_obj_t* type = lv_label_create(card);
+  lv_label_set_text(type, type_name);
+  lv_obj_set_style_text_font(type, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(type, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(type, pad, pad + PSC(52));
+
+  lv_obj_t* key = lv_label_create(card);
+  lv_label_set_text(key, s_chat_contact_tuple.public_key_hex);
+  lv_label_set_long_mode(key, LV_LABEL_LONG_WRAP);
+  lv_obj_set_size(key, card_w - 2 * pad, key_h);
+  lv_obj_set_style_text_font(key, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(key, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(key, pad, key_y);
+
+  const lv_coord_t button_gap = PSC(8);
+  const lv_coord_t button_w = (card_w - 2 * pad - button_gap) / 2;
+  auto make_button = [&](const char* label_text, lv_coord_t x, lv_event_cb_t cb) {
+    lv_obj_t* button = lv_btn_create(card);
+    lv_obj_set_size(button, button_w, button_h);
+    lv_obj_set_pos(button, x, button_y);
+    styleButton(button);
+    lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* label = lv_label_create(button);
+    lv_label_set_text(label, TR(label_text));
+    lv_obj_set_style_text_font(label, &g_font_14, LV_PART_MAIN);
+    lv_obj_center(label);
+  };
+  make_button("Cancel", pad, [](lv_event_t*) { closeChatContactTuplePopup(); });
+  make_button("Add", pad + button_w + button_gap, chatContactTupleAddCb);
+}
+
+static void chatContactCardSetAvatarContent(lv_obj_t* avatar, const char* name,
+                                            const char* type_icon, uint32_t foreground) {
+  char emoji[20];
+  if (nameFirstEmoji(name, emoji, sizeof emoji)) {
+    uint32_t offset = 0;
+    avatarAddEmojiImage(avatar, emojiLookupAny(_lv_txt_encoded_next(emoji, &offset)), false);
+  } else {
+    char initials[12];
+    const char* avatar_text = type_icon;
+    if (!avatar_text) {
+      AvatarText::initials(name, initials, sizeof initials, uiFontDrawsGlyph,
+                           (void*)&g_font_semi_14);
+      avatar_text = initials;
+    }
+    lv_obj_t* avatar_label = lv_label_create(avatar);
+    lv_label_set_text(avatar_label, avatar_text);
+    lv_obj_set_style_text_font(avatar_label, type_icon ? &ui_icons_20 : &g_font_semi_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(avatar_label, lv_color_hex(foreground), LV_PART_MAIN);
+    lv_obj_center(avatar_label);
+  }
+}
+
+static void chatCreateContactCard(lv_obj_t* parent,
+                                 const ChatContactTuple::Contact& contact,
+                                 lv_coord_t x, lv_coord_t y, lv_coord_t width,
+                                 int message_idx, int contact_ordinal) {
+  const lv_coord_t pad = SC(8);
+  const lv_coord_t stripe_w = SC(4);
+  const lv_coord_t avatar_size = SC(38);
+  const lv_coord_t card_h = chatContactCardHeight();
+  const lv_coord_t text_x = pad + stripe_w + avatar_size + SC(8);
+  const lv_coord_t text_w = LV_MAX((lv_coord_t)1, width - text_x - pad);
+  const char* type_icon = contact.type == 2 ? UI_ICON_RADIO_TOWER
+                        : contact.type == 3 ? UI_ICON_USERS
+                        : contact.type == 4 ? UI_ICON_CPU
+                        : nullptr;
+
+  lv_obj_t* card = lv_obj_create(parent);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, width, card_h);
+  lv_obj_set_pos(card, x, y);
+  styleSurface(card, COLOR_PANEL, SC(8));
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+  lv_obj_set_style_border_width(card, s_theme_high_contrast ? 2 : 1, LV_PART_MAIN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE | NAV_SKIP_FLAG);
+  const intptr_t action = (static_cast<intptr_t>(message_idx) << 2) |
+                          (static_cast<intptr_t>(contact_ordinal) & 0x3);
+  lv_obj_add_event_cb(card, bubbleContactCardTapCb, LV_EVENT_CLICKED,
+                      reinterpret_cast<void*>(action));
+
+  lv_obj_t* stripe = lv_obj_create(card);
+  lv_obj_remove_style_all(stripe);
+  lv_obj_set_size(stripe, stripe_w, card_h);
+  lv_obj_set_pos(stripe, 0, 0);
+  styleSurface(stripe, COLOR_ACCENT, SC(2));
+  lv_obj_clear_flag(stripe, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* avatar = lv_obj_create(card);
+  lv_obj_remove_style_all(avatar);
+  lv_obj_clear_flag(avatar, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(avatar, NAV_SKIP_FLAG);
+  lv_obj_set_size(avatar, avatar_size, avatar_size);
+  lv_obj_set_pos(avatar, pad + stripe_w, pad);
+  lv_obj_set_style_radius(avatar, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(avatar, LV_OPA_COVER, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_bg_color(avatar, lv_color_white(), LV_PART_MAIN);
+  lv_obj_set_style_border_color(avatar, lv_color_black(), LV_PART_MAIN);
+  lv_obj_set_style_border_width(avatar, 1, LV_PART_MAIN);
+  const uint32_t avatar_foreground = 0x000000;
+#else
+  lv_obj_set_style_bg_color(avatar,
+                            lv_color_hex(contact.type == 1 ? hsvRgb(nameHue(contact.name), 55, 42) : 0x607D8B),
+                            LV_PART_MAIN);
+  const uint32_t avatar_foreground = 0xE6EBED;
+#endif
+  chatContactCardSetAvatarContent(avatar, contact.name, type_icon, avatar_foreground);
+
+  lv_obj_t* name = lv_label_create(card);
+  lv_label_set_text(name, contact.name);
+  lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(name, text_w);
+  lv_obj_set_style_text_font(name, &g_font_semi_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(name, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(name, text_x, SC(6));
+
+  char short_key[24];
+  snprintf(short_key, sizeof short_key, "<%.6s...%.6s>", contact.public_key_hex,
+           contact.public_key_hex + ChatContactTuple::PUBLIC_KEY_HEX_LENGTH - 6);
+  lv_obj_t* key = lv_label_create(card);
+  lv_label_set_text(key, short_key);
+  lv_label_set_long_mode(key, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(key, text_w);
+  lv_obj_set_style_text_font(key, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(key, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(key, text_x, SC(23));
+}
+
 static int messageMenuLinkCount(const char* text, ChatLinkKind kind) {
   int count = 0;
   ChatLinkChoice choice{};
@@ -49709,18 +50052,24 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   // rows from chatMeasureBubbleHeight, which must agree with this exactly.
   const lv_coord_t kInnerMaxW = kBubbleMaxW - 2 * kChatBubblePadH;
   const lv_font_t* msg_font = chatMessageFont();
-  lv_point_t txt_size;
-  lv_txt_get_size(&txt_size, d.san_text, msg_font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  lv_point_t txt_size{};
+  if (d.san_text[0])
+    lv_txt_get_size(&txt_size, d.san_text, msg_font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
   const lv_coord_t txt_w_used = (txt_size.x <= kInnerMaxW) ? txt_size.x : kInnerMaxW;
-  lv_point_t wrapped;
-  lv_txt_get_size(&wrapped, d.san_text, msg_font, 0, 0, txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  lv_point_t wrapped{};
+  if (d.san_text[0])
+    lv_txt_get_size(&wrapped, d.san_text, msg_font, 0, 0,
+                    txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
   const bool show_sender_line = (p->channel_mode || s_chat_virt.thread_is_room) && !m.outgoing && d.san_sender[0];
   const lv_coord_t sender_lh = lv_font_get_line_height(&g_font_semi_12);
   lv_coord_t sender_w = 0;
   if (show_sender_line) sender_w = lv_txt_get_width(d.san_sender, strlen(d.san_sender), &g_font_semi_12, 0, LV_TEXT_FLAG_NONE);
-  lv_coord_t inner_w = LV_MAX(txt_w_used > 0 ? txt_w_used : 1, LV_MIN(sender_w, kInnerMaxW));
+  const lv_coord_t card_w = d.contact_count ? chatContactCardWidth(kInnerMaxW) : 0;
+  lv_coord_t inner_w = LV_MAX(LV_MAX(txt_w_used, card_w),
+                              LV_MIN(sender_w, kInnerMaxW));
   const lv_coord_t bw = LV_MIN((lv_coord_t)(inner_w + 2 * kChatBubblePadH), kBubbleMaxW);
-  const lv_coord_t bh = kChatBubblePadV * 2 + (show_sender_line ? sender_lh : 0) + wrapped.y;
+  const lv_coord_t content_h = chatContactContentHeight(d.contact_count, wrapped.y);
+  const lv_coord_t bh = kChatBubblePadV * 2 + (show_sender_line ? sender_lh : 0) + content_h;
 
   ChatFoot foot;
   chatBuildFoot(m, p->channel_mode, foot);
@@ -49783,33 +50132,52 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
     inner_y = sender_lh;
   }
 
-  lv_obj_t* tlbl = lv_label_create(bubble);
-  lv_obj_set_style_text_font(tlbl, msg_font, LV_PART_MAIN);
-  lv_obj_set_style_text_color(tlbl,
+  lv_obj_t* tlbl = nullptr;
+  if (d.san_text[0]) {
+    tlbl = lv_label_create(bubble);
+    lv_obj_set_style_text_font(tlbl, msg_font, LV_PART_MAIN);
+    lv_obj_set_style_text_color(tlbl,
 #if defined(HAS_TDECK_PRO)
-                              lv_color_black(),
+                                lv_color_black(),
 #else
-                              lv_color_hex(COLOR_CHAT_TEXT),
+                                lv_color_hex(COLOR_CHAT_TEXT),
 #endif
-                              LV_PART_MAIN);
-  lv_label_set_text(tlbl, d.san_text);
+                                LV_PART_MAIN);
+    lv_label_set_text(tlbl, d.san_text);
+    if (txt_size.x > kInnerMaxW) lv_label_set_long_mode(tlbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(tlbl, txt_w_used);
+    lv_obj_set_pos(tlbl, 0, inner_y);
+  }
   // Detect every actionable span before layout; the overlay draws only link glyphs
   // while the plain label supplies normal text and the hit-test coordinate map.
   int _ua, _ub; const bool has_url = chatUrlSpan(d.san_text, 0, &_ua, &_ub);
   int _ca, _cb; double _clat, _clon;
   const bool has_coords = chatCoordSpan(d.san_text, 0, &_ca, &_cb, &_clat, &_clon);
   int _ha, _hb; const bool has_hashtag = chatHashtagSpan(d.san_text, 0, &_ha, &_hb);
-  if (txt_size.x > kInnerMaxW) lv_label_set_long_mode(tlbl, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(tlbl, txt_w_used);
-  lv_obj_set_pos(tlbl, 0, inner_y);
   const bool failed_send = m.outgoing && m.deliv_state == UITask::DELIV_FAILED;
   lv_obj_t* link_label = nullptr;
 #if !defined(HAS_TDECK_PRO)
-  if ((has_url || has_coords || has_hashtag) && !failed_send) {
+  if (tlbl && (has_url || has_coords || has_hashtag) && !failed_send) {
     link_label = chatCreateLinkLabel(bubble, tlbl, d.san_text, msg_font,
                                      lv_color_hex(COLOR_CHAT_TEXT), txt_w_used, wrapped.y, 0, inner_y);
   }
 #endif
+
+  if (d.contact_count) {
+    size_t from = 0;
+    int ordinal = 0;
+    const size_t text_length = strlen(d.show_text);
+    lv_coord_t card_y = inner_y + wrapped.y;
+    if (wrapped.y > 0) card_y += chatContactCardGap();
+    size_t tuple_start = 0;
+    ChatContactTuple::Contact contact{};
+    while (ChatContactTuple::span(d.show_text, text_length, from, &tuple_start, &contact)) {
+      chatCreateContactCard(bubble, contact, 0, card_y, card_w, ring_idx, ordinal);
+      card_y += chatContactCardHeight() + chatContactCardGap();
+      from = contact.end;
+      ++ordinal;
+    }
+  }
 
   // The foot, under the bubble: the chain, then the text; right-aligned for yours.
   {
@@ -49945,8 +50313,13 @@ static lv_coord_t chatVirtCreateCompactRow(LvChatPanel* p, int logical_i, int ri
                       reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
   double compact_lat = 0.0, compact_lon = 0.0;
   const bool compact_has_coords = chatFirstCoord(m.text, &compact_lat, &compact_lon);
+  int tuple_start = 0, tuple_end = 0;
+  const bool compact_has_contact = chatContactTupleSpan(m.text, 0, &tuple_start, &tuple_end);
   if (compact_has_coords && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
     lv_obj_add_event_cb(row, bubbleCoordTapCb, LV_EVENT_SHORT_CLICKED,
+                        reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
+  if (compact_has_contact && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
+    lv_obj_add_event_cb(row, bubbleContactTupleTapCb, LV_EVENT_SHORT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
   if (m.outgoing && m.deliv_state == UITask::DELIV_FAILED)
     lv_obj_add_event_cb(row, bubbleRetryTapCb, LV_EVENT_CLICKED,
@@ -49962,8 +50335,15 @@ static lv_coord_t chatVirtCreateCompactRow(LvChatPanel* p, int logical_i, int ri
 
 static lv_coord_t chatVirtCreateMessageRow(LvChatPanel* p, int logical_i, int ring_idx,
                                            lv_coord_t vp_y, lv_coord_t* out_jump_y) {
-  if (s_chat_virt.compact_chat)
-    return chatVirtCreateCompactRow(p, logical_i, ring_idx, vp_y, out_jump_y);
+  if (s_chat_virt.compact_chat) {
+    UITask::UIMessage m;
+    if (g_lv.task && g_lv.task->getMessageByIndex(ring_idx, m)) {
+      ChatBubbleDisplay d{};
+      chatParseMessageDisplay(m, p->channel_mode, s_chat_virt.thread_is_room, d);
+      if (!d.contact_count)
+        return chatVirtCreateCompactRow(p, logical_i, ring_idx, vp_y, out_jump_y);
+    }
+  }
   return chatVirtCreateBubble(p, logical_i, ring_idx, vp_y, out_jump_y);
 }
 
