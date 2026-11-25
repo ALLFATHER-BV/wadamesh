@@ -969,3 +969,13 @@
     #define CAP_REPLY_QUOTE 1
   #endif
 #endif
+
+// Settings > Keyboard > Emoji pack: download the SD emoji pack over Wi-Fi (#831).
+// The download goes through the app store's file helper on the tile worker.
+#ifndef CAP_EMOJI_PACK_DOWNLOAD
+  #if CAP_EMOJI_PACK && CAP_LUA_APPS && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+    #define CAP_EMOJI_PACK_DOWNLOAD 1
+  #else
+    #define CAP_EMOJI_PACK_DOWNLOAD 0
+  #endif
+#endif
