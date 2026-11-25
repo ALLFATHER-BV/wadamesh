@@ -2503,3 +2503,6 @@ Spell suggestions: on	Підказки правопису: увімк
 Spell suggestions: off	Підказки правопису: вимк
 English only. Tap a correction above the message box.	Лише англійська. Торкніться виправлення над полем повідомлення.
 English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Лише англійська. Натисніть Вгору, щоб перейти до виправлень, Ліворуч або Праворуч, щоб вибрати, потім Enter.
+Phosphor	Фосфор
+Apply the new look? WADAMESH restarts to apply it.	Застосувати новий вигляд? WADAMESH перезапуститься.
+With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	З cities.bin у /var/lib/wadamesh-zero головний екран показує місто, де ви є, замість імені вузла.

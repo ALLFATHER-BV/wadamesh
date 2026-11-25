@@ -2502,3 +2502,6 @@ Spell suggestions: on	Suggestions d'orthographe : activé
 Spell suggestions: off	Suggestions d'orthographe : désactivé
 English only. Tap a correction above the message box.	Anglais uniquement. Touchez une correction au-dessus du champ de message.
 English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Anglais uniquement. Appuyez sur Haut pour atteindre les corrections, Gauche ou Droite pour en choisir une, puis Entrée.
+Phosphor	Phosphore
+Apply the new look? WADAMESH restarts to apply it.	Appliquer le nouveau look ? WADAMESH redémarre.
+With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Avec cities.bin dans /var/lib/wadamesh-zero, l'accueil affiche la ville où vous êtes au lieu du nom du nœud.

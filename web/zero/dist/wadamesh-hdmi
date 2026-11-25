@@ -1,0 +1,112 @@
+#!/bin/sh
+# WADAMESH as a desktop app on the HDMI screen (mouse + keyboard). The LCD version is
+# stopped while it runs (both would share the one radio link) and started again after.
+#   wadamesh-hdmi            run it now (the desktop menu entry)
+#   wadamesh-hdmi --start    open it in the background and return (stays open after SSH closes)
+#   wadamesh-hdmi --stop     close it; the LCD version comes back
+#   wadamesh-hdmi --status   is it open, and on which display
+#   wadamesh-hdmi --watch    at login: open WADAMESH whenever an HDMI screen is plugged in,
+#                            close it when it's unplugged. Closing it by hand keeps it closed
+#                            until the screen is plugged in again.
+#   WADA_FULLSCREEN=1 wadamesh-hdmi   fill the screen (needs more graphics memory than the
+#                                     Zero has by default: dtoverlay=vc4-kms-v3d,cma-128)
+case "$1" in
+  --start) setsid -f "$0" >/dev/null 2>&1 </dev/null; echo "WADAMESH is opening on the HDMI screen."; exit 0 ;;
+  --stop)
+    if pkill -TERM -f /usr/local/bin/wadamesh-desktop; then echo "WADAMESH closed; the LCD version is coming back."
+    else echo "WADAMESH isn't open on HDMI."; fi
+    exit 0 ;;
+  --status)
+    if pid=$(pgrep -f /usr/local/bin/wadamesh-desktop); then
+      echo "open (pid $pid), $(grep -a -m1 'using display' "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/wadamesh-hdmi.log" 2>/dev/null)"
+    else echo "not open"; fi
+    exit 0 ;;
+esac
+# Started over SSH or by a launcher without the desktop's environment: find the session.
+: "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+export XDG_RUNTIME_DIR
+if [ -z "$WAYLAND_DISPLAY" ] && [ -z "$DISPLAY" ]; then
+  # Ask the desktop's own taskbar (or file manager) which display it is on: Raspberry Pi
+  # OS can have more than one Wayland socket (wayland-0 and wayland-1).
+  for p in wf-panel-pi pcmanfm-pi pcmanfm labwc; do
+    pid=$(pgrep -n -u "$(id -u)" "$p") || continue
+    WAYLAND_DISPLAY=$(tr '\0' '\n' < /proc/"$pid"/environ 2>/dev/null | sed -n 's/^WAYLAND_DISPLAY=//p')
+    [ -n "$WAYLAND_DISPLAY" ] && break
+  done
+  if [ -z "$WAYLAND_DISPLAY" ]; then   # last resort: the newest socket
+    WAYLAND_DISPLAY=$(ls -t "$XDG_RUNTIME_DIR" 2>/dev/null | grep -m1 -x 'wayland-[0-9]*')
+  fi
+  export WAYLAND_DISPLAY
+fi
+# X11 (Xwayland) is the way onto the screen: on Wayland, SDL2 can only show a frame through
+# the GPU driver, and the Pi's Mesa crashes there (dri2_query_image). Over X11 a software
+# frame goes out with XShm, no GPU. Take the desktop's X display the same way.
+if [ -z "$DISPLAY" ]; then
+  for p in wf-panel-pi pcmanfm-pi pcmanfm; do
+    pid=$(pgrep -n -u "$(id -u)" "$p") || continue
+    DISPLAY=$(tr '\0' '\n' < /proc/"$pid"/environ 2>/dev/null | sed -n 's/^DISPLAY=//p')
+    [ -n "$DISPLAY" ] && break
+  done
+fi
+if [ -n "$DISPLAY" ] && [ -z "$WADA_GPU" ]; then
+  export DISPLAY SDL_VIDEODRIVER=x11 SDL_FRAMEBUFFER_ACCELERATION=0
+fi
+LOCK="$XDG_RUNTIME_DIR/wadamesh-desktop.lock"
+
+hdmi_on() { grep -qx connected /sys/class/drm/card*-HDMI-A-*/status 2>/dev/null; }
+
+LOG="$XDG_RUNTIME_DIR/wadamesh-hdmi.log"
+
+run_app() {   # one copy at a time, whoever starts it
+  exec 9>"$LOCK"
+  if ! flock -n 9; then
+    # a copy that was just closed can take a moment to let go
+    i=0; while [ $i -lt 10 ] && ! flock -n 9; do sleep 1; i=$((i+1)); done
+    if ! flock -n 9; then
+      echo "wadamesh-hdmi: WADAMESH is already open on the HDMI screen (pkill -f wadamesh-desktop closes it)" >&2
+      return 0
+    fi
+  fi
+  echo "wadamesh-hdmi: opening on DISPLAY=${DISPLAY:-none} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-none} (log: $LOG)" >&2
+  sudo -n systemctl stop wadamesh-zero 2>/dev/null
+  sleep 1
+  WADA_DATA_DIR=/var/lib/wadamesh-zero WADA_FULLSCREEN="${WADA_FULLSCREEN:-0}" \
+    /usr/local/bin/wadamesh-desktop --tcp 127.0.0.1:5000 >"$LOG" 2>&1
+  sudo -n systemctl start wadamesh-zero 2>/dev/null
+  exec 9>&-
+}
+
+if [ "$1" != "--watch" ] && [ "$1" != "--if-hdmi" ]; then run_app; exit 0; fi
+
+# --watch (--if-hdmi is the older name): one watcher per session
+exec 8>"$XDG_RUNTIME_DIR/wadamesh-hdmi-watch.lock"
+flock -n 8 || exit 0
+# At login, wait for the desktop to finish coming up: a window opened before then runs but
+# never shows on the screen. The taskbar appearing is the sign; then a little longer.
+i=0
+while [ $i -lt 90 ] && ! pgrep -u "$(id -u)" -x wf-panel-pi >/dev/null && ! pgrep -u "$(id -u)" -x pcmanfm >/dev/null; do
+  sleep 1; i=$((i+1))
+done
+sleep "${WADA_HDMI_DELAY:-15}"
+dismissed=0
+while :; do
+  if hdmi_on; then
+    if [ "$dismissed" = 0 ]; then
+      run_app &
+      app=$!
+      # wait until it's closed or the screen goes away
+      while kill -0 "$app" 2>/dev/null; do
+        if ! hdmi_on; then
+          pkill -TERM -f /usr/local/bin/wadamesh-desktop
+          wait "$app" 2>/dev/null
+          break
+        fi
+        sleep 2
+      done
+      hdmi_on && dismissed=1   # closed by hand: stays closed until the next plug-in
+    fi
+  else
+    dismissed=0
+  fi
+  sleep 2
+done

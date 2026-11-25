@@ -356,7 +356,7 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     extern CrowPanel35Display display;
   #elif defined(HAS_CROWPANEL_50)
     extern CrowPanel50Display display;
-  #elif defined(HAS_RAK_TAP_V2) || defined(HELTEC_LORA_V4_R8)
+  #elif defined(HAS_RAK_TAP_V2) || defined(HELTEC_LORA_V4_R8) || defined(HAS_TWATCH_S3)
     extern LGFXDisplay display;
   #elif defined(HAS_TDISPLAY_P4)
     extern DISPLAY_CLASS display;            // RM69A10Display (AMOLED) or HI8561Display (LCD) — set in CMakeLists
@@ -1028,6 +1028,23 @@ static void lookAdjust(ThemeTokens& t, bool day, bool more, uint8_t style) {
   t.link = t.sub;
   t.tint = 34;
   if (!more) return;
+#if defined(WADA_ZERO)
+  if (style == TOUCH_LOOK_PHOSPHOR) {
+    // Phosphor: a green CRT terminal, day or night (a terminal has no day mode). The
+    // Cardputer Zero front end adds scanlines while it is on (web/zero/zero_main.cpp).
+    t.glow = 0x39FF6A; t.on_glow = 0x001A08;
+    t.bg = 0x000000; t.panel = 0x031006; t.control = 0x06200C; t.control_pressed = 0x0A3414;
+    t.field = 0x031006; t.border = 0x0E4A1C; t.raised = 0x06200C; t.hair = 0x072A10; t.track = 0x0E4A1C;
+    t.text = 0x7CFF95; t.sub = 0x2FC25A; t.tertiary = 0x1A7A36; t.secondary_action = 0x0A3414;
+    t.sent_bg = 0x05301A; t.recv_bg = 0x031006; t.mention_bg = 0x173A06;
+    const uint32_t h[6] = { 0x39FF6A, 0x7CFF95, 0x2FE0C0, 0xFFB000, 0xB6FF3A, 0x39FF6A };   // amber for radio
+    memcpy(t.hue, h, sizeof h);
+    t.link = 0x7CFF95;
+    t.tint = 18;
+    t.info = 0x2FE0C0; t.ok = 0x39FF6A; t.warn = 0xFFB000;
+    return;
+  }
+#endif
   if (style == TOUCH_LOOK_NEON) {
     // The accent pushed to full brightness, magenta beside it.
     t.glow = hsvRgb(rgbHue(t.glow), 100, day ? 78 : 100);
@@ -9101,6 +9118,8 @@ static void ssaverSetEnabled(bool on);        // Settings > Display (bridge abov
 static void ssaverSetBatterySecs(uint8_t secs);
 static void ssaverSetAlwaysOnPower(bool on);
 static void ssaverRequestPreview();
+static bool ssaverAllowed(bool glance_lit);   // fwd decl: bridge lives further down
+static void ssaverStart(uint32_t now, bool preview);
 #if CAP_SSAVER_NORTH_LOCK
 static void ssaverSetNorthLock(bool on);
 #endif
@@ -9131,6 +9150,8 @@ static void webPointerRead(lv_indev_drv_t* drv, lv_indev_data_t* data) {
   }
 }
 #endif
+
+static void touchScreenBacklight(bool on);   // fwd decl: defined further down (backlight/panel control)
 
 static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   (void)indev;
@@ -9269,6 +9290,14 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
     // otherwise press the UI underneath and trigger the action before you see
     // it (issue #4). Applies to both boards (V4 + T-Deck).
     if (g_lv.task && (g_lv.task->isScreenOff() || (g_lv.task->isManualLock() && !s_pin_root))) {
+#if defined(HAS_TWATCH_S3) && CAP_SCREENSAVER
+      // Touch while PIN-locked "peeks": re-shows the Constellation screensaver
+      // without unlocking (no-op if it's already up). The crown still unlocks.
+      if (g_lv.task->isManualLock() && ssaverAllowed(false)) {
+        touchScreenBacklight(true);
+        ssaverStart(millis(), false);
+      }
+#endif
 #if defined(HAS_TDECK_MAX)
       // Max: a tap wakes an idle-dark screen (swallowed, not delivered), as on
       // every non-Pro board. The Pro's side-button-only policy stays for the Pro.
@@ -9585,7 +9614,9 @@ static const char* deviceKeyboardText() {
 #define WADA_STR2(x) #x
 #define WADA_STR(x)  WADA_STR2(x)
 static const char* deviceRadioName() {
-#if defined(RADIO_CLASS)
+#if defined(TLORA_PAGER_UNIFIED)
+  return radio.name();
+#elif defined(RADIO_CLASS)
   const char* n = WADA_STR(RADIO_CLASS);
   if (!strncmp(n, "Custom", 6) && n[6]) n += 6;
   return n;
@@ -20407,7 +20438,7 @@ static void buildDisplayPage() {
     setSwitchRow(c, "Message LED", "Flashes on a new message and breathes while any are unread.",
                  touchPrefsGetMsgLed(), msgLedToggleCb);
 #endif
-#if defined(TLORA_PAGER)
+#if defined(TLORA_PAGER) && !defined(WADA_ZERO)   // (Cardputer Zero: no motion sensor support yet)
     setSwitchRow(c, "Wake when picked up", "Lifting the Pager off the table turns the screen on (a locked Pager shows "
                  "its lock screen). Only after it lay still, so it stays dark in a bag or pocket.",
                  touchPrefsGetPickupWake(), pickupToggleCb);
@@ -20569,7 +20600,12 @@ static void buildGpsPage() {
     lv_obj_t* c = setCard("");
     lv_obj_t* gps_sw = setSwitchRow(c, "GPS", nullptr, g_lv.task && g_lv.task->getGPSState(), toggleGpsCb);
 #if CAP_CITY_LOCATOR
-    setSwitchRow(c, "City on Home", "With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.",
+    setSwitchRow(c, "City on Home",
+#if defined(WADA_ZERO)
+                 "With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.",
+#else
+                 "With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.",
+#endif
                  s_city_on_home, [](lv_event_t* e) {
       if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
       s_city_on_home = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -20915,9 +20951,11 @@ static void buildSoundPage() {
 #if defined(TLORA_PAGER)
     setSwitchRow(c, "Quiet now", "Do Not Disturb until you switch it off. Holding Shift does the same from anywhere.",
                  s_quiet_manual, quietNowToggleCb);
+#if !defined(WADA_ZERO)
     setSwitchRow(c, "Quiet when face down", "Lying face down, the screen goes off and the Pager stays silent "
                  "(no sound, no vibration). Picking it up ends it. Keeps the motion sensor on, a little more power.",
                  touchPrefsGetFaceDownQuiet(), faceDownToggleCb);
+#endif
 #elif defined(HAS_M9_IMU)
     setSwitchRow(c, "Quiet when face down", "Lying face down, the screen goes off and the device stays silent. "
                  "Picking it up ends it. Keeps the motion sensor on, a little more power.",
@@ -21243,9 +21281,11 @@ static void buildBatteryPage() {
     setNote(c, "The percentage comes from the battery's fuel gauge, which learns the pack by itself.");
   }
   {
+#if !defined(WADA_ZERO)   // Cardputer Zero: its charger is not ours to drive; the gauge card above is all
     buildCareCard();
     buildCapacityCard();
     buildChargeCard();
+#endif
 #else
     // Calibrate: the current voltage counts as 100% (packs whose full voltage is not
     // 4.2 V). Tap sets it; hold resets.
@@ -33655,7 +33695,9 @@ static bool spectrumSweepChunk() {
     // attribute the old frequency's RSSI to this bin.
     if (radio.setFrequency(f) != RADIOLIB_ERR_NONE) continue;   // retune (chip -> standby on the new freq)
 #endif
-#if defined(HAS_THINKNODE_M9)
+#if defined(TLORA_PAGER_UNIFIED)
+    radio.startSpectrumReceive();
+#elif defined(HAS_THINKNODE_M9)
     // Pass irqMask = 0 so RX_DONE / PREAMBLE_DETECTED are not routed to DIO1
     // (GPIO42) while sweeping: the wrapper's setFlag ISR stays attached on DIO1
     // and a stray LoRa preamble mid-sweep would otherwise latch irq_read during
@@ -33694,7 +33736,9 @@ static bool spectrumSweepChunk() {
       if (r <= -5 && r >= -180 && r > peak) peak = r;
       delayMicroseconds(SPEC_READ_GAP_US);
     }
-#if defined(HAS_THINKNODE_M9)
+#if defined(TLORA_PAGER_UNIFIED)
+    radio.spectrumStandby();
+#elif defined(HAS_THINKNODE_M9)
     // Park in STDBY_XOSC (raw mode byte 0x01), NOT the default standby(): the
     // plain call selects STDBY_RC, which stops the TCXO on this board (it is
     // powered from the chip's DIO3 rail), so the next bin's startReceive would
@@ -34039,7 +34083,10 @@ static void spectrumTimerCb(lv_timer_t* t) {
 static void spectrumRestoreRadio() {
   if (!s_spectrum_active) return;     // idempotent — never restore/clear twice
   NodePrefs* p = the_mesh.getNodePrefs();
-#if defined(HAS_THINKNODE_M9)
+#if defined(TLORA_PAGER_UNIFIED)
+  radio.standby();
+  if (p) radio.spectrumCalibrate(p->freq - 4.0f, p->freq + 4.0f);
+#elif defined(HAS_THINKNODE_M9)
   // The sweep left the chip parked in STDBY_XOSC; drop to a true STDBY_RC first
   // so the mesh gets the chip back in the standby mode RadioLib's own flow uses
   // (and because CalibImage is only legal in RC standby). Then re-run image
@@ -36122,7 +36169,9 @@ static void openSpectrumPage() {
   // silicon actually rejects them from RX is unverified — but one SPI command is
   // cheap hardening against the first sweep running on stale modem config.
   radio.standby();
-#if defined(HAS_THINKNODE_M9)
+#if defined(TLORA_PAGER_UNIFIED)
+  radio.spectrumCalibrate(start, stop);
+#elif defined(HAS_THINKNODE_M9)
   // LR1110: image rejection is only calibrated where the chip was told to
   // calibrate it — begin() covered mesh_freq ±4 MHz, NOT this ±12 MHz span. One
   // CalibImage over the whole span (legal from the RC standby above, a few ms,
@@ -39455,8 +39504,14 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 #define WADA_BOARD_ID "thinknode-m9"
 #elif defined(HAS_RAK_TAP_V2)
 #define WADA_BOARD_ID "rak-tap-v2"
+#elif defined(WADA_ZERO)
+#define WADA_BOARD_ID "cardputer-zero"
+#elif defined(HAS_TWATCH_S3)
+#define WADA_BOARD_ID "twatch-s3"
 #elif defined(TLORA_PAGER)
-  #if defined(USE_LR1121)
+  #if defined(TLORA_PAGER_UNIFIED)
+#define WADA_BOARD_ID "tlora-pager-unified"
+  #elif defined(USE_LR1121)
 #define WADA_BOARD_ID "tlora-pager-lr1121"
   #else
 #define WADA_BOARD_ID "tlora-pager-sx1262"
@@ -62790,6 +62845,8 @@ class UiUsbFilesHost : public UsbFilesHost {
     static const char* kBoard = "LilyGo T-Deck";
 #elif defined(HELTEC_LORA_V4_TFT)
     static const char* kBoard = "Heltec V4 TFT";
+#elif defined(HAS_TWATCH_S3)
+    static const char* kBoard = "LilyGo T-Watch S3";
 #else
     static const char* kBoard = "wadamesh";
 #endif
@@ -66114,8 +66171,16 @@ static void updateGlobalStatusBar() {
         lv_obj_set_size(g_statusbar.left_label,
                         (sb_w >= 600) ? (sb_w - SC(190)) : (sb_w >= 300) ? 100 : 66,   // #47a: narrower on the 240 px V4 bar
                         LV_SIZE_CONTENT);
+#if defined(WADA_ZERO)
+        // Cardputer Zero: the 480-px bar is shown at 320 px, where a slow marquee shimmers
+        // as it crosses the resampling grid. Give the name the whole left of the bar (up to
+        // the status icons; Home has no clock up there) and keep it still, "..." if too long.
+        lv_obj_set_width(g_statusbar.left_label, 360);
+        lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_DOT);
+#else
         lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
         lv_obj_set_style_anim_speed(g_statusbar.left_label, 14, LV_PART_MAIN);  // slow, readable marquee
+#endif
         setLabelIfChanged(g_statusbar.left_label, nm);
       }
       s_left_home_cfg = true;
@@ -72219,7 +72284,7 @@ static void applyColorLook(bool more, uint8_t style, bool rainbow) {
   if (s_theme_high_contrast) more = rainbow = false;
   if (rainbow) more = true;
   s_look_more = more;
-  s_look_style = style > TOUCH_LOOK_PASTEL ? TOUCH_LOOK_REGULAR : style;
+  s_look_style = style > TOUCH_LOOK_MAX ? TOUCH_LOOK_REGULAR : style;
   s_look_rainbow = rainbow;
   ThemeTokens t;
   themeTokensFromGlobals(t);
@@ -72597,7 +72662,7 @@ struct ThemePageUi {
   lv_obj_t* hc_sw;
   lv_obj_t* swatch[kThemeColorN]; lv_obj_t* custom; lv_obj_t* custom_dot; lv_obj_t* accent_note;
   lv_obj_t* mute_sw; lv_obj_t* tone_box; lv_obj_t* tone[TOUCH_MUTE_TONE_N]; lv_obj_t* tone_dot[TOUCH_MUTE_TONE_N][2];
-  lv_obj_t* tint_sw; lv_obj_t* more_sw; lv_obj_t* style[3]; lv_obj_t* style_dot[3][3]; lv_obj_t* rainbow_sw; lv_obj_t* colour_note;
+  lv_obj_t* tint_sw; lv_obj_t* more_sw; lv_obj_t* style[TOUCH_LOOK_MAX + 1]; lv_obj_t* style_dot[TOUCH_LOOK_MAX + 1][3]; lv_obj_t* rainbow_sw; lv_obj_t* colour_note;
   lv_obj_t* bg[5]; lv_obj_t* bg_sw[5]; lv_obj_t* bg_col_btn; lv_obj_t* bg_col_dot;
   lv_obj_t* bg_img_btn; lv_obj_t* bg_img_lbl; lv_obj_t* bg_note; lv_obj_t* glass_sw;
   lv_obj_t* bg_dim_box; lv_obj_t* bg_dim_row;   // Picture dimming, under the picture's button
@@ -73234,7 +73299,7 @@ static void themePageRepaint() {
     themeSwitchSet(s_tp.tint_sw, s_theme_pend.mute_whole, true);
   }
   themeSwitchSet(s_tp.more_sw, more, !locked);
-  for (int i = 0; i < 3; ++i) {
+  for (int i = 0; i <= TOUCH_LOOK_MAX; ++i) {
     if (!s_tp.style[i]) continue;
     themeChoiceStyle(s_tp.style[i], more && s_theme_pend.style == i, more);
     ThemeTokens st;
@@ -73490,7 +73555,11 @@ static bool themeBackOffersApply() {
     if (o == s_tp.page || o == s_tp.mini) { on_page = true; break; }
   if (!on_page) return false;
   s_theme_back_asked = true;
+#if defined(WADA_ZERO)
+  showConfirm(TR("Apply the new look? WADAMESH restarts to apply it."), TR("Apply and restart"),
+#else
   showConfirm(TR("Apply the new look? The Pager restarts to apply it."), TR("Apply and restart"),
+#endif
               themeBackApply, false, true);
   return true;
 }
@@ -73892,9 +73961,10 @@ static void buildThemeSettings() {
     lv_obj_set_size(row, cw, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(row, SC(6), LV_PART_MAIN);
-    static const char* const kStyleNames[3] = { "Regular", "Neon", "Pastel" };
-    const lv_coord_t tw = (cw - 2 * SC(6)) / 3;
-    for (int i = 0; i < 3; ++i) {
+    static const char* const kStyleNames[4] = { "Regular", "Neon", "Pastel", "Phosphor" };
+    const int n_styles = TOUCH_LOOK_MAX + 1;
+    const lv_coord_t tw = (cw - (n_styles - 1) * SC(6)) / n_styles;
+    for (int i = 0; i < n_styles; ++i) {
       lv_obj_t* b = themeChoiceTile(row, tw, TR(kStyleNames[i]), themeStyleCb, (uintptr_t)i);
       lv_obj_t* pic = lv_obj_get_child(b, 0);
       for (int k = 0; k < 3; ++k) {
@@ -82111,6 +82181,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // must match so LVGL renders the full 320x240 landscape surface.
     s_ui_rotation = LV_DISP_ROT_270;
 #endif
+#if defined(HAS_TWATCH_S3)
+    // Square 240x240 ST7789 is mounted 180° (upside-down at rotation 0), so run
+    // at ROT_180: applyHardwarePanelRotation maps it to panel rotation 2, and the
+    // touch point rotation follows (180°) so taps stay aligned.
+    s_ui_rotation = LV_DISP_ROT_180;
+#endif
   #if defined(HAS_SENSECAP_INDICATOR)
     // The panel driver exposes its fixed 480x480 surface directly.
     s_ui_rotation = LV_DISP_ROT_NONE;
@@ -82263,6 +82339,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // (800x480 landscape, or portrait on a phone), already upright; no remote mode.
     g_lv.disp_drv.hor_res  = WADA_WEB_W;
     g_lv.disp_drv.ver_res  = WADA_WEB_H;
+#elif defined(HAS_TWATCH_S3)
+    // Square 240x240 ST7789 watch panel — fixed portrait, no landscape toggle.
+    g_lv.disp_drv.hor_res  = 240;
+    g_lv.disp_drv.ver_res  = 240;
 #else
     // Landscape rotates the panel in HARDWARE (smooth — no per-pixel software
     // rotation each flush), so tell LVGL the already-rotated resolution and let
@@ -82339,7 +82419,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       // LVGL leaves input alone on a hardware-rotated panel, but DOES rotate it on
       // a software-rotated one (the P4), so lvglTouchRead hands the P4's points
       // back to LVGL in the panel frame.
+#if !defined(HAS_TWATCH_S3)
+      // T-Watch S3 exception: the FT6x36 already reports in the user frame (180°
+      // from the ST7789 native), so the point must NOT follow the panel rotation.
       heltecV4CapTouchSetPointRotation(s_ui_rotation); // LVGL won't, so driver does
+#endif
     }
 #endif
 #if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(ATTAKY_MESH_SERIES) || defined(HAS_WIO_TRACKER_L2)
@@ -84252,7 +84336,17 @@ void UITask::noteUserInput() {
   /* Called from touch input. If the screen was explicitly locked via the
    * BOOT button, ignore touches entirely — only a BOOT button press can
    * release that. Idle-timeout locks still unlock on touch. */
-  if (_screen_off && _manual_lock) return;
+  if (_screen_off && _manual_lock) {
+#if defined(HAS_TWATCH_S3) && CAP_SCREENSAVER
+    // T-Watch S3: touch while PIN-locked "peeks" — it re-shows (or extends) the
+    // Constellation screensaver, but does NOT unlock. The crown still unlocks.
+    if (ssaverAllowed(false)) {
+      if (s_ssaver_on) s_ssaver_start_ms = millis();   // extend the one already up
+      else             ssaverStart(millis(), false);   // bring it back from dark
+    }
+#endif
+    return;
+  }
   _last_input_ms = millis();
 #if defined(ATTAKY_MESH_SERIES)
   // This board wakes on POWER_BTN only (polled in the UI loop). A touch on a dark
@@ -86450,6 +86544,26 @@ static void cityLocatorTick(unsigned long now) {
   }
   s_nofix_since = 0;
 
+#if defined(WADA_ZERO)
+  // Cardputer Zero: no SD card layer; cities.bin sits in the data folder ($WADA_DATA_DIR)
+  // and a plain read of a few MB is instant on Linux.
+  if (!city::loaded()) {
+    if (s_gave_up || (long)(now - s_retry_at) < 0) return;
+    s_retry_at = now + 60000;
+    const char* dir = getenv("WADA_DATA_DIR");
+    char path[512];
+    snprintf(path, sizeof path, "%s/cities.bin", dir && dir[0] ? dir : ".");
+    FILE* f = fopen(path, "rb");
+    if (!f) return;                                   // no file yet: look again in a minute
+    fseek(f, 0, SEEK_END); const long len = ftell(f); fseek(f, 0, SEEK_SET);
+    if (len < 8 || len > 4L * 1024L * 1024L) { fclose(f); loadFailed(true); return; }
+    s_buf = (uint8_t*)malloc((size_t)len);
+    const bool ok = s_buf && fread(s_buf, 1, (size_t)len, f) == (size_t)len;
+    fclose(f);
+    if (!ok || !city::load(s_buf, (size_t)len)) { free(s_buf); s_buf = nullptr; loadFailed(true); return; }
+    fprintf(stderr, "[city] loaded %s (%ld bytes)\n", path, len);
+  }
+#endif
   if (!city::loaded()) {
     if (s_buf || s_gave_up || !s_sd_mounted || (long)(now - s_retry_at) < 0) return;
     s_retry_at = now + 60000;                       // no card / no file yet: look again in a minute
@@ -86474,6 +86588,9 @@ static void cityLocatorTick(unsigned long now) {
   const int32_t lon = (int32_t)llround(g_lv.task->getNodeLon() * 1.0e6);
   const char* found = city::lookup(lat, lon);
   const char* name = found ? found : "";
+#if defined(WADA_ZERO)
+  if (getenv("WADA_CITY_DEBUG")) fprintf(stderr, "[city] %d,%d -> '%s'\n", (int)lat, (int)lon, name);
+#endif
   if (strcmp(name, s_city_now) == 0) { s_pending_hits = 0; s_first = false; return; }
   if (strcmp(name, s_pending) == 0) {
     if (s_pending_hits < 255) ++s_pending_hits;
@@ -87262,6 +87379,12 @@ void UITask::loop() {
     static uint8_t s_user_btn_prev = HIGH;
     auto readUserButton = []() {
       uint8_t state = digitalRead(PIN_USER_BTN);
+#if defined(HAS_TWATCH_S3)
+      // Crown (PWR) button is the AXP2101 PEK line, not GPIO0 (which is the
+      // BOOT button under the back cover). Fold a latched short-press into the
+      // active-low user-button signal so the generic lock/wake branch below runs.
+      if (board.pollPowerKeyShortPress()) state = LOW;
+#endif
 #if defined(HAS_WIO_TRACKER_L2)
       static bool expanderDown = false;
   static uint32_t nextExpanderPollMs = 0;
@@ -87439,6 +87562,37 @@ void UITask::loop() {
           _screen_off = true;
           // NO _manual_lock -- touch can still wake the screen.
         }
+      }
+    }
+#elif defined(HAS_TWATCH_S3)
+    // T-Watch S3 crown (PWR) — T-Deck-style two-step: screen off -> peek (show the
+    // Constellation); screensaver up -> unlock (PIN entry if a PIN is set); awake ->
+    // lock. The 6 s long-press power-off is the AXP2101.
+    if (v == LOW && s_user_btn_prev == HIGH) {
+      if (_screen_off) {
+#if CAP_SCREENSAVER
+        if (s_ssaver_on) {
+          wakeScreen();                 // screensaver up -> unlock (routes to PIN when set)
+        } else if (ssaverAllowed(false)) {
+          touchScreenBacklight(true);   // wake the panel + light it (ssaverStart dims to 40%)
+          ssaverStart(millis(), false); // dark -> peek: light the Constellation, stay locked
+        } else {
+          wakeScreen();                 // dark but screensaver not allowed -> just wake
+        }
+#else
+        wakeScreen();
+#endif
+      } else {
+        // Awake -> lock to the screensaver (carrying the PIN), else plain sleep/lock.
+#if CAP_SCREENSAVER
+        if (ssaverAllowed(false)) {
+          ssaverStart(now, false);
+          _screen_off  = true;
+          _manual_lock = s_lock_on_screen_off || s_pin_on;
+        } else
+#endif
+        if (s_lock_on_screen_off || s_pin_on) { lockScreen(); }
+        else { sleepScreen(); }
       }
     }
 #else   // Generic: Heltec V4 -- short press toggles screen + lock
@@ -90843,3 +90997,87 @@ static void docAuditFocus() {
 }
 #endif
 #endif  // DOC_CAPTURE
+
+#if defined(WADA_ZERO)
+// M5Stack Cardputer Zero (web/zero/zero_main.cpp): it runs the Pager layout but has real
+// arrow keys (fn + F / Z / X / C), so they move the focus in 2D like the T-Deck trackball
+// and the M9 d-pad instead of the Pager knob's one-dimensional turn. dir: 0 up, 1 down,
+// 2 left, 3 right. In a text field left / right move the caret.
+void wadaZeroNavArrow(int dir) {
+  if (!s_nav_group) return;
+  const bool fwd = (dir == 1 || dir == 3);   // down / right = next, up / left = previous
+  // The pickers that capture the Pager's knob capture the arrows too (updatePagerEncoder):
+  // the @-mention and accent pickers, a slider being edited, and an open dropdown, whose
+  // list only moves on LV_KEY_UP/DOWN (a spatial move would leave it with the old choice).
+  if (s_mentionnav_active) {
+    if (s_mentionbox_cell_n > 0) {
+      s_mentionnav_idx = (s_mentionnav_idx + (fwd ? 1 : (int)s_mentionbox_cell_n - 1)) % (int)s_mentionbox_cell_n;
+      mentionNavRestyle();
+    }
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return;
+  }
+  if (s_accentnav_active) {
+    if (s_accbox_cell_n > 0) {
+      s_accentnav_idx = (s_accentnav_idx + (fwd ? 1 : (int)s_accbox_cell_n - 1)) % (int)s_accbox_cell_n;
+      accentNavRestyle();
+    }
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return;
+  }
+  if (s_pager_slider_edit) {
+    navSliderNudge(s_pager_slider_edit, fwd ? +1 : -1);
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return;
+  }
+  if (navOpenDropdown()) {
+    if (dir == 0 || dir == 1) navPushTap(dir == 1 ? LV_KEY_DOWN : LV_KEY_UP);
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return;
+  }
+  if ((dir == 0 || dir == 1) && navInfoModalScroll(dir == 0)) {   // a long info sheet scrolls
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return;
+  }
+  lv_obj_t* ta = navFocusedTextarea();
+  if (ta && (dir == 2 || dir == 3)) {
+    const uint32_t pos = lv_textarea_get_cursor_pos(ta);
+    const uint32_t len = (uint32_t)_lv_txt_get_encoded_length(lv_textarea_get_text(ta));
+    const bool at_edge = dir == 2 ? pos == 0 : pos >= len;
+    if (!at_edge) {
+      if (dir == 2) lv_textarea_cursor_left(ta); else lv_textarea_cursor_right(ta);
+      if (g_lv.task) g_lv.task->noteUserInput();
+      return;
+    }
+  }
+  if ((dir == 2 || dir == 3) && navOnTabBar()) {
+    navSwitchTab(dir == 2 ? -1 : +1);
+  } else {
+    lv_obj_t* const was = lv_group_get_focused(s_nav_group);
+    const int nd = dir == 0 ? NAV_UP : dir == 1 ? NAV_DOWN : dir == 2 ? NAV_LEFT : NAV_RIGHT;
+    const bool took = navMoveDir(nd);
+    if (!took && lv_group_get_focused(s_nav_group) == was && (dir == 0 || dir == 1)) {
+      if (!(luaAppIsOpen() && luaAppScroll(dir == 0))) navScrollFocused(dir == 0);
+    }
+  }
+  s_nav_show = true;
+  if (g_lv.task) g_lv.task->noteUserInput();
+}
+#endif
+
+#if defined(WADA_ZERO)
+// True while a screen needs every key as typed (web/zero/zero_main.cpp then leaves the
+// letter arrows, the 4-8 tab keys and its own number shortcuts alone): a text field
+// focused, the PIN pad, a Lua app reading the keyboard, an open confirm.
+bool wadaZeroUiWantsKeys() {
+  if (navFocusedTextarea()) return true;
+  if (s_pin_root) return true;
+  if (luaAppIsOpen() && luaAppHasOnInput()) return true;
+  return false;
+}
+#endif
+
+#if defined(WADA_ZERO)
+// The Phosphor look is on: the Cardputer Zero front end draws scanlines over it.
+bool wadaZeroPhosphor() { return s_look_more && s_look_style == TOUCH_LOOK_PHOSPHOR; }
+#endif

@@ -2503,3 +2503,6 @@ Spell suggestions: on	Предлози правописа: укљ
 Spell suggestions: off	Предлози правописа: искљ
 English only. Tap a correction above the message box.	Само енглески. Додирните исправку изнад поља за поруку.
 English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Само енглески. Притисните Горе за исправке, Лево или Десно за избор, па Enter.
+Phosphor	Фосфор
+Apply the new look? WADAMESH restarts to apply it.	Применити нови изглед? WADAMESH се рестартује.
+With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Са cities.bin у /var/lib/wadamesh-zero почетни екран приказује град у којем сте уместо имена чвора.

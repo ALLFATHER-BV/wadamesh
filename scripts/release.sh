@@ -30,7 +30,7 @@ DEST="${WADAMESH_VPS:-}"; DEST_PATH="${WADAMESH_VPS_PATH:-/srv/wadamesh/firmware
 # All S3/PIO boards. The ESP32-P4 IDF builds (T-Display P4, CrowPanel P4, Tanmatsu standalone)
 # are built by scripts/build/p4-release.sh into out/p4_<tag> and injected in step 2c,
 # because this loop is PlatformIO-only.
-ENVS="heltec_v4_tft_companion_radio_usb_tcp_touch:wadamesh-heltec-v4-tft LilyGo_TDeck_companion_radio_touch:wadamesh-tdeck ThinkNode_M9_companion_radio_touch:wadamesh-thinknode-m9 rak_tap_v2_companion_radio_touch:wadamesh-rak-tap-v2 heltec_v4_r8_tft_companion_radio_usb_tcp_touch:wadamesh-heltec-v4-r8-tft tlora_pager_lr1121_companion_radio_touch:wadamesh-tlora-pager-lr1121 tlora_pager_sx1262_companion_radio_touch:wadamesh-tlora-pager-sx1262 attaky_mesh_series_companion_radio_touch:wadamesh-attaky wio_tracker_l2_companion_radio_touch:wadamesh-wio-tracker-l2 crowpanel_35_companion_radio_touch:wadamesh-crowpanel-35 crowpanel_50_companion_radio_touch:wadamesh-crowpanel-50 LilyGo_TDeck_Pro_v1_0_companion_radio_touch:wadamesh-tdeck-pro-v1-0 LilyGo_TDeck_Pro_v1_1_companion_radio_touch:wadamesh-tdeck-pro-v1-1 LilyGo_TDeck_Max_companion_radio_touch:wadamesh-tdeck-max sensecap_indicator_companion_radio_touch:wadamesh-sensecap-indicator"
+ENVS="heltec_v4_tft_companion_radio_usb_tcp_touch:wadamesh-heltec-v4-tft LilyGo_TDeck_companion_radio_touch:wadamesh-tdeck ThinkNode_M9_companion_radio_touch:wadamesh-thinknode-m9 rak_tap_v2_companion_radio_touch:wadamesh-rak-tap-v2 heltec_v4_r8_tft_companion_radio_usb_tcp_touch:wadamesh-heltec-v4-r8-tft tlora_pager_lr1121_companion_radio_touch:wadamesh-tlora-pager-lr1121 tlora_pager_sx1262_companion_radio_touch:wadamesh-tlora-pager-sx1262 attaky_mesh_series_companion_radio_touch:wadamesh-attaky wio_tracker_l2_companion_radio_touch:wadamesh-wio-tracker-l2 crowpanel_35_companion_radio_touch:wadamesh-crowpanel-35 crowpanel_50_companion_radio_touch:wadamesh-crowpanel-50 LilyGo_TDeck_Pro_v1_0_companion_radio_touch:wadamesh-tdeck-pro-v1-0 LilyGo_TDeck_Pro_v1_1_companion_radio_touch:wadamesh-tdeck-pro-v1-1 LilyGo_TDeck_Max_companion_radio_touch:wadamesh-tdeck-max sensecap_indicator_companion_radio_touch:wadamesh-sensecap-indicator t_watch_s3_companion_radio_touch:wadamesh-twatch-s3"
 
 # Per-channel destination paths.
 if [ "$MODE" = "stable" ]; then
@@ -150,6 +150,21 @@ if [ "$MODE" = "beta" ]; then
   else
     echo "note: no ${P4_OUT#$ROOT/} - the ESP-IDF boards (P4, Tanmatsu) are not in this beta"
     echo "      (run scripts/build/p4-release.sh $TAG first, or inject them by hand)"
+  fi
+  # 2d. The M5Stack Cardputer Zero (a Linux program, not a firmware image): the
+  #     wadamesh-zero.tar.gz archive scripts/build/zero-release.sh built and checked
+  #     for $TAG into out/zero_$TAG. Not web-flashable, so no manifest; the site links
+  #     the archive in the feed. The GitHub release attaches it with the bins.
+  ZERO_OUT="$ROOT/out/zero_$TAG"
+  if [ -f "$ZERO_OUT/wadamesh-zero.tar.gz" ]; then
+    for f in wadamesh-zero.tar.gz wadamesh-zero.tar.gz.sha256; do
+      cp "$ZERO_OUT/$f" "$ARCH/$TAG/"
+      cp "$ZERO_OUT/$f" "$FEED/"
+    done
+    echo "injected the Cardputer Zero archive from ${ZERO_OUT#$ROOT/}"
+  else
+    echo "note: no ${ZERO_OUT#$ROOT/} - the Cardputer Zero is not in this beta"
+    echo "      (run scripts/build/zero-release.sh $TAG first)"
   fi
 else
   # 2s. STABLE promotion: NO rebuild — copy the already-tested beta bins so what

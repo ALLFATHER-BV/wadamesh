@@ -2515,3 +2515,6 @@ Spell suggestions: on	Podpowiedzi pisowni: włączone
 Spell suggestions: off	Podpowiedzi pisowni: wyłączone
 English only. Tap a correction above the message box.	Tylko angielski. Dotknij poprawki nad polem wiadomości.
 English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Tylko angielski. Naciśnij Góra, aby przejść do poprawek, Lewo lub Prawo, aby wybrać, potem Enter.
+Phosphor	Fosfor
+Apply the new look? WADAMESH restarts to apply it.	Zastosować nowy wygląd? WADAMESH uruchomi się ponownie.
+With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Z plikiem cities.bin w /var/lib/wadamesh-zero ekran główny pokazuje miasto, w którym jesteś, zamiast nazwy węzła.

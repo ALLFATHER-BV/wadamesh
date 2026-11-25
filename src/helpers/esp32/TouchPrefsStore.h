@@ -789,6 +789,12 @@ bool touchPrefsSetColorfulBubbles(bool on);
 constexpr uint8_t TOUCH_LOOK_REGULAR = 0;
 constexpr uint8_t TOUCH_LOOK_NEON    = 1;
 constexpr uint8_t TOUCH_LOOK_PASTEL  = 2;
+constexpr uint8_t TOUCH_LOOK_PHOSPHOR = 3;   // green-on-black terminal (Cardputer Zero build only)
+#if defined(WADA_ZERO)
+constexpr uint8_t TOUCH_LOOK_MAX = TOUCH_LOOK_PHOSPHOR;
+#else
+constexpr uint8_t TOUCH_LOOK_MAX = TOUCH_LOOK_PASTEL;
+#endif
 uint8_t touchPrefsGetChatIcons();
 void    touchPrefsSetChatIcons(uint8_t style);
 bool    touchPrefsGetMoreColors();

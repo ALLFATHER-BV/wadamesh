@@ -2512,3 +2512,6 @@ Spell suggestions: on	Helyesírási javaslatok: bekapcsolva
 Spell suggestions: off	Helyesírási javaslatok: kikapcsolva
 English only. Tap a correction above the message box.	Csak angolul. Koppints egy javításra az üzenetmező felett.
 English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Csak angolul. A Fel gombbal éred el a javításokat, Balra vagy Jobbra választasz, majd Enter.
+Phosphor	Foszfor
+Apply the new look? WADAMESH restarts to apply it.	Alkalmazod az új kinézetet? A WADAMESH újraindul.
+With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Ha a cities.bin a /var/lib/wadamesh-zero mappában van, a kezdőképernyő a csomópont neve helyett azt a várost mutatja, ahol vagy.

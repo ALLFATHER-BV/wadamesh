@@ -24,7 +24,11 @@ public:
   long getLatitude() override;            // micro-degrees, as MicroNMEA reports them
   long getLongitude() override;
   long getAltitude() override;            // millimetres (0 when the host gives none)
+#if defined(WADA_ZERO)
+  long satellitesCount() override;   // the Cap's GPS receiver (web/zero/zero_gps.cpp)
+#else
   long satellitesCount() override { return 0; }   // a browser fix has no satellites to count
+#endif
   bool isValid() override;
   long getTimestamp() override;           // epoch seconds of the fix
   void sendSentence(const char*) override {}

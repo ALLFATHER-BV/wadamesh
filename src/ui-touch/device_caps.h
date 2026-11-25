@@ -197,6 +197,16 @@
   #define CAP_OTA          1
   #define CAP_LOCK_SCREEN  1
 
+#elif defined(HAS_TWATCH_S3)          // ===== LilyGo T-Watch S3 (ESP32-S3) =====
+  #define CAP_TOUCH        1   // FT6x36 capacitive touch
+  #define CAP_ROTATABLE    0   // fixed square 240x240 portrait
+  #define CAP_LARGE_SCREEN 0
+  #define CAP_SD           0   // no card slot on the watch
+  #define CAP_FILESYSTEM   1   // SPIFFS + tiles LittleFS
+  #define CAP_GPS          0   // set 1 for the S3 Plus (GNSS fitted)
+  #define CAP_OTA          1
+  #define CAP_LOCK_SCREEN  1
+
 #elif defined(HELTEC_LORA_V4_R8)      // ===== Heltec WiFi LoRa 32 V4-R8 (ESP32-S3R8, 8 MB PSRAM) =====
   // Same board family + panel as the V4 TFT (the build also defines
   // HELTEC_LORA_V4_TFT to reuse all its UI code); the deltas are 8 MB octal
@@ -353,7 +363,8 @@
 
 // "Now in <city>" (CITY_LOCATOR.md): the GPS fix looked up in a boundary file from the
 // SD card, held in PSRAM. Not the T-LoRa Pager: its app slot is full.
-#if CAP_SD && CAP_GPS && defined(BOARD_HAS_PSRAM) && defined(ESP32) && !defined(TLORA_PAGER)
+#if (CAP_SD && CAP_GPS && defined(BOARD_HAS_PSRAM) && defined(ESP32) && !defined(TLORA_PAGER)) || \
+    defined(WADA_ZERO)   // Cardputer Zero: Linux, cities.bin from the data folder (web/zero)
   #define CAP_CITY_LOCATOR 1
 #else
   #define CAP_CITY_LOCATOR 0

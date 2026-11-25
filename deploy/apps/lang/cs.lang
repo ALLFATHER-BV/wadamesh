@@ -2518,3 +2518,6 @@ Spell suggestions: on	Návrhy pravopisu: zapnuto
 Spell suggestions: off	Návrhy pravopisu: vypnuto
 English only. Tap a correction above the message box.	Jen angličtina. Klepněte na opravu nad polem zprávy.
 English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Jen angličtina. Stiskněte Nahoru pro opravy, Vlevo nebo Vpravo pro výběr a pak Enter.
+Phosphor	Fosfor
+Apply the new look? WADAMESH restarts to apply it.	Použít nový vzhled? WADAMESH se restartuje.
+With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	S cities.bin v /var/lib/wadamesh-zero ukazuje domovská obrazovka město, ve kterém jste, místo názvu uzlu.

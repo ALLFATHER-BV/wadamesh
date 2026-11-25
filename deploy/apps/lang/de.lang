@@ -2503,3 +2503,6 @@ Spell suggestions: on	Rechtschreibvorschläge: ein
 Spell suggestions: off	Rechtschreibvorschläge: aus
 English only. Tap a correction above the message box.	Nur Englisch. Tippe auf eine Korrektur über dem Nachrichtenfeld.
 English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Nur Englisch. Mit Hoch zu den Korrekturen, mit Links oder Rechts eine wählen, dann Enter.
+Phosphor	Phosphor
+Apply the new look? WADAMESH restarts to apply it.	Neues Aussehen anwenden? WADAMESH startet neu.
+With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Mit cities.bin in /var/lib/wadamesh-zero zeigt Home die Stadt, in der du bist, statt des Knotennamens.

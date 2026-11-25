@@ -2501,3 +2501,6 @@ Spell suggestions: on	Spellingsuggesties: aan
 Spell suggestions: off	Spellingsuggesties: uit
 English only. Tap a correction above the message box.	Alleen Engels. Tik op een correctie boven het berichtvak.
 English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Alleen Engels. Druk op Omhoog voor de correcties, Links of Rechts om er een te kiezen, dan Enter.
+Phosphor	Fosfor
+Apply the new look? WADAMESH restarts to apply it.	Nieuwe look toepassen? WADAMESH herstart.
+With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Met cities.bin in /var/lib/wadamesh-zero toont Home de stad waar je bent in plaats van de nodenaam.

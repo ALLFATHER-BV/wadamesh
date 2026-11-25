@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+# wadamesh-cli: talk to the WADAMESH running on this Cardputer Zero.
+#   wadamesh-cli status | contacts | channels | advert | shot | hud
+#   wadamesh-cli send "#public" "hello mesh"      wadamesh-cli send @alice "hi"
+#   wadamesh-cli tail                             (stream incoming messages, Ctrl+C to stop)
+#   echo "status" | wadamesh-cli -                (commands from stdin)
+import os, socket, sys
+SOCK = os.environ.get("WADA_SOCK", os.path.join(os.environ.get("WADA_DATA_DIR", "/var/lib/wadamesh-zero"), "wadamesh.sock"))
+def main():
+    args = sys.argv[1:] or ["help"]
+    lines = [l.strip() for l in sys.stdin] if args == ["-"] else [" ".join(args)]
+    s = socket.socket(socket.AF_UNIX)
+    try:
+        s.connect(SOCK)
+    except OSError as e:
+        sys.exit(f"wadamesh-cli: can't reach {SOCK} ({e.strerror}). Is wadamesh-zero running?")
+    for line in lines:
+        if not line: continue
+        s.sendall((line + "\n").encode())
+        tail = line.split()[0] == "tail"
+        s.settimeout(None if tail else 3.0)
+        buf = b""
+        try:
+            while True:
+                chunk = s.recv(4096)
+                if not chunk: break
+                if tail:
+                    sys.stdout.write(chunk.decode(errors="replace")); sys.stdout.flush(); continue
+                buf += chunk
+                s.settimeout(0.3)   # the answer is in; take whatever follows right after
+        except socket.timeout:
+            pass
+        except KeyboardInterrupt:
+            break
+        sys.stdout.write(buf.decode(errors="replace"))
+if __name__ == "__main__":
+    main()

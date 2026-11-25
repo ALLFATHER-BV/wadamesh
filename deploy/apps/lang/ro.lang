@@ -2504,3 +2504,6 @@ Spell suggestions: on	Sugestii de ortografie: pornite
 Spell suggestions: off	Sugestii de ortografie: oprite
 English only. Tap a correction above the message box.	Doar în engleză. Atinge o corectură deasupra câmpului de mesaj.
 English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Doar în engleză. Apasă Sus pentru corecturi, Stânga sau Dreapta pentru a alege una, apoi Enter.
+Phosphor	Fosfor
+Apply the new look? WADAMESH restarts to apply it.	Aplici noul aspect? WADAMESH repornește.
+With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Cu cities.bin în /var/lib/wadamesh-zero, ecranul principal arată orașul în care te afli în locul numelui nodului.

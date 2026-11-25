@@ -102,6 +102,11 @@ public:
   mesh::LocalIdentity self_id;
   const uint8_t* getSelfPubKey() const { return self_id.pub_key; }
   NodePrefs* getNodePrefs() { return &_prefs; }
+#if defined(WADA_ZERO)
+  // Cardputer Zero's wadamesh-cli: a message it sent shows in the UI's history too.
+  void zeroRecordSentChannel(int idx, const char* text) { beOutgoingChannel(idx, text); }
+  void zeroRecordSentDirect(const uint8_t pub_key[32], const char* text, uint32_t ack) { beOutgoingDirect(pub_key, text, ack); }
+#endif
   bool savePrefs();
   bool setBLEPin(uint32_t pin);                         // the node's PIN (companion); demo: false
   uint32_t getOrphanedBlobs() const { return 0; }
