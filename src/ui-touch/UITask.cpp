@@ -56844,6 +56844,28 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
             return true;
           }
         }
+        // Send is the composer's right edge, and RIGHT off it was a dead press. It now
+        // reaches the conversation header, which opens the chat settings. Until now
+        // the header's only key path was Up through every message to the oldest, so a
+        // long thread's settings (Delete history, Delete chat) were out of reach from
+        // inside it. On the M9 an open chat always shows the header and never the
+        // gear (chat_hdr in the status-bar refresh); the gear is tried first only to
+        // keep the same pair, in the same order, as the Pager's hop past Send
+        // (pagerChatComposerNav). Both are in the focus group while they show: their
+        // visibility is part of navMaybeRebuild's signature.
+        if (LvChatPanel* chat = navOpenChatPanel();
+            chat && chat->send_btn && lv_obj_is_valid(chat->send_btn) && s_nav_group &&
+            lv_group_get_focused(s_nav_group) == chat->send_btn) {
+          for (lv_obj_t* bar : { g_statusbar.chan_gear, g_statusbar.chat_head }) {
+            if (bar && lv_obj_is_valid(bar) && !lv_obj_has_flag(bar, LV_OBJ_FLAG_HIDDEN) &&
+                lv_obj_get_group(bar) == s_nav_group) {
+              s_nav_show = true;
+              lv_group_focus_obj(bar);
+              if (g_lv.task) g_lv.task->noteUserInput();
+              return true;
+            }
+          }
+        }
         lv_obj_t* source_ta = navFocusedTextarea();
         lv_obj_t* button = m9SymbolButtonForField(source_ta);
         if (!button && ta) button = m9SymbolButtonForField(ta);

@@ -1,0 +1,31 @@
+# The M9's key path from inside a conversation to its chat settings: RIGHT past Send lands
+# on the conversation header, and OK there opens the settings. M9 flavour of the host
+# build (cmake -DWADA_HOST_BOARD=m9), demo backend, keys only:
+#   web/build-host-m9/wadamesh-host --headless --size 320x240 \
+#     --script web/scripts/m9-chat-settings-hop.wada --shots <dir>
+# Expect: hop-1-send has the cursor on Send; hop-2-header has it on the conversation header
+# with the "Chat settings" card (before the fix the cursor stayed on Send); hop-3-sheet is
+# the Public channel's action list.
+wait 5000
+# first boot: OK on the focused Skip, then MSG (0x81) for Chats and OK on the first chat
+key enter
+wait 3000
+key 0x81
+wait 2000
+key enter
+wait 2500
+# text -> emoji -> # -> Send
+key right
+wait 600
+key right
+wait 600
+key right
+wait 600
+shot hop-1-send
+key right
+wait 600
+shot hop-2-header
+key enter
+wait 1500
+shot hop-3-sheet
+quit
