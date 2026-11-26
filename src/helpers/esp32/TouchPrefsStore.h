@@ -815,6 +815,8 @@ constexpr uint8_t TOUCH_LOOK_MAX = TOUCH_LOOK_PHOSPHOR;
 #else
 constexpr uint8_t TOUCH_LOOK_MAX = TOUCH_LOOK_PASTEL;
 #endif
+bool    touchPrefsGetFixedNavigation();
+bool    touchPrefsSetFixedNavigation(bool fixed);
 uint8_t touchPrefsGetChatIcons();
 void    touchPrefsSetChatIcons(uint8_t style);
 bool    touchPrefsGetMoreColors();

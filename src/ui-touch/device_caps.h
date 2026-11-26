@@ -370,6 +370,13 @@
   #define CAP_CITY_LOCATOR 0
 #endif
 
+// Fixed menus on the V4-R8 and its desktop/browser test surface.
+#if defined(HELTEC_LORA_V4_R8) || (defined(WADA_WEB) && !defined(WADA_SIM_PAGER))
+  #define CAP_FIXED_NAVIGATION 1
+#else
+  #define CAP_FIXED_NAVIGATION 0
+#endif
+
 // Persisted, restart-to-apply UI-size selector. Large-screen boards already
 // expose it; the Pager, V4-R8, ThinkNode M9, T-Deck and T-Deck Pro / Max add
 // font-only presets because their compact viewports cannot safely take global
