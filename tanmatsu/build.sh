@@ -2,7 +2,8 @@
 # Reusable wadamesh/Tanmatsu build wrapper: activates the project-local ESP-IDF 5.5.1
 # and runs idf.py with our device/target/sdkconfig params.
 #   ./build.sh build        # compile the AppFS app (launcher / app store)
-#   ./build.sh standalone   # + bootloader + standalone table -> build/tanmatsu/wadamesh-tanmatsu-merged.bin
+#   ./build.sh standalone   # standalone app (+ remote access) + bootloader + standalone table
+#                           # -> build/tanmatsu-standalone/wadamesh-tanmatsu-merged.bin
 #   ./build.sh standalone-flash -p /dev/cu.usbmodemXXXX [--erase]
 #                           # write that merged image at 0x0. REPLACES the launcher.
 #                           # -p is required: the Tanmatsu's ESP32-P4 port.
@@ -51,7 +52,14 @@ python3 "$(cd .. && pwd)/scripts/build/patch_idf_fatfs_exfat.py" \
 # build on a fresh beta_N tag bakes exactly "beta_N".
 WADA_FW_TAG="${WADA_FW_TAG:-$(git describe --tags --match 'beta_*' --always 2>/dev/null || echo dev)}"
 WADA_FW_DATE="$(date '+%-d %b %Y')"
-IDF_ARGS=(-B build/tanmatsu \
+BUILD_DIR=build/tanmatsu
+VARIANT_ARGS=()
+# The standalone image compiles its own app in its own build directory: its 6 MB slot
+# fits remote access (WADA_TANMATSU_STANDALONE), which the AppFS app leaves out.
+case "${1:-}" in
+  standalone|standalone-flash) BUILD_DIR=build/tanmatsu-standalone; VARIANT_ARGS=(-DWADA_TANMATSU_STANDALONE=1) ;;
+esac
+IDF_ARGS=(-B "$BUILD_DIR" "${VARIANT_ARGS[@]}" \
   -DDEVICE=tanmatsu \
   -DSDKCONFIG_DEFAULTS="sdkconfigs/general;sdkconfigs/tanmatsu;sdkconfigs/wadamesh;sdkconfigs/wadamesh_tanmatsu" \
   -DWADA_FW_TAG="$WADA_FW_TAG" -DWADA_FW_DATE="$WADA_FW_DATE" \
@@ -121,15 +129,15 @@ if [ "$#" -eq 1 ] && [ "$1" = build ]; then
   exec idf.py "${IDF_ARGS[@]}" gen_project_binary
 fi
 
-# Standalone (web flasher) image: the SAME application.bin as the AppFS build, booted
-# by the stock IDF bootloader from partition_tables/wadamesh_standalone.csv instead of
-# by the launcher. The app finds its data by partition label ('locfd') and the table
-# is at 0x8000 either way, so nothing in the app changes between the two.
-STANDALONE_BIN="build/tanmatsu/wadamesh-tanmatsu-merged.bin"
+# Standalone (web flasher) image: the AppFS app plus remote access, booted by the stock
+# IDF bootloader from partition_tables/wadamesh_standalone.csv instead of by the
+# launcher. The app finds its data by partition label ('locfd') and the table is at
+# 0x8000 either way, so both builds share the same data.
+STANDALONE_BIN="$BUILD_DIR/wadamesh-tanmatsu-merged.bin"
 # Port the last standalone-flash wrote to (the P4), for build-upload-monitor.sh.
-STANDALONE_PORT_FILE="build/tanmatsu/standalone/port"
+STANDALONE_PORT_FILE="$BUILD_DIR/standalone/port"
 build_standalone() {
-  local B=build/tanmatsu PT=build/tanmatsu/standalone/partition-table.bin
+  local B="$BUILD_DIR" PT="$BUILD_DIR/standalone/partition-table.bin"
   idf.py "${IDF_ARGS[@]}" gen_project_binary bootloader
   mkdir -p "$B/standalone"
   python "$IDF_PATH/components/partition_table/gen_esp32part.py" --quiet --flash-size 16MB \
@@ -180,10 +188,10 @@ case "${1:-}" in
     echo "[build.sh] flashing the standalone image to $port: this REPLACES the badge.team launcher"
     if [ "$erase" = 1 ]; then python -m esptool --chip esp32p4 -p "$port" erase_flash; fi
     python -m esptool --chip esp32p4 -p "$port" write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m \
-      0x2000 build/tanmatsu/bootloader/bootloader.bin \
-      0x8000 build/tanmatsu/standalone/partition-table.bin \
-      0x1D000 build/tanmatsu/standalone/otadata-blank.bin \
-      0x20000 build/tanmatsu/application.bin
+      0x2000 "$BUILD_DIR/bootloader/bootloader.bin" \
+      0x8000 "$BUILD_DIR/standalone/partition-table.bin" \
+      0x1D000 "$BUILD_DIR/standalone/otadata-blank.bin" \
+      0x20000 "$BUILD_DIR/application.bin"
     echo "$port" > "$STANDALONE_PORT_FILE"
     exit 0 ;;
 esac

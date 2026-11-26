@@ -59,6 +59,11 @@ set(WADA_DEFS
   # the core's ESP32Board.h reads these raw pins directly; Tanmatsu uses badge-bsp, so -1 (none):
   P_LORA_DIO_1=-1 P_LORA_TX_LED=-1 P_LORA_TX_NEOPIXEL_LED=-1
   PIN_BOARD_SCL=-1 PIN_BOARD_SDA=-1 PIN_VBAT_READ=-1)
+# build.sh standalone: the full-flash image's 6 MB app slot has room for remote access,
+# which the launcher's AppFS limit does not (CAP_REMOTE_ACCESS in device_caps.h).
+if(WADA_TANMATSU_STANDALONE)
+  list(APPEND WADA_DEFS WADA_TANMATSU_STANDALONE=1)
+endif()
 foreach(_d ${WADA_DEFS})
   idf_build_set_property(COMPILE_OPTIONS "-D${_d}" APPEND)
 endforeach()

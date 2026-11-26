@@ -36,8 +36,9 @@
 # separate IDF project (crowpanel_p4_101/) with one image per board revision; it is
 # built and verified here in the same loop, from its own directory.
 #
-# The Tanmatsu's standalone web-flasher image (wadamesh-tanmatsu-merged.bin, which
-# replaces the badge.team launcher) is built and verified after the loop.
+# The Tanmatsu's launcher app (wadamesh-tanmatsu.bin) and its standalone web-flasher
+# image (wadamesh-tanmatsu-merged.bin, which replaces the badge.team launcher, and adds
+# remote access) are built and verified after the loop.
 #
 # Usage:
 #   scripts/build/p4-release.sh beta_88 [outdir]
@@ -164,35 +165,56 @@ for v in "${VARIANTS[@]}"; do
   echo "   ok  $(stat -f%z "$app") bytes  id=$got"
 done
 
-# Tanmatsu standalone (web flasher) image. One variant, no env axes, and the same
-# application.bin the app store gets, so no cache trap: `standalone` rebuilds the
-# app with this tag, adds the bootloader and the standalone partition table, and
-# merges them (tanmatsu/build.sh). It has no OTA name to check, so check its board
-# id ("tanmatsu", which the beta reports use) and that it is not another P4 board.
-name="wadamesh-tanmatsu"
-echo "=== $name  (tanmatsu/build/tanmatsu, standalone)"
-B="$ROOT/tanmatsu/build/tanmatsu"
-rm -f "$B/application.bin" "$B/wadamesh-tanmatsu-merged.bin"
-rc=0
-( cd "$ROOT/tanmatsu" && WADA_FW_TAG="$TAG" ./build.sh standalone ) > "/tmp/p4rel_$name.log" 2>&1 || rc=$?
-app="$B/application.bin"
-if [ "$rc" -ne 0 ] || [ ! -f "$app" ] || [ ! -f "$B/wadamesh-tanmatsu-merged.bin" ]; then
-  echo "   FAIL: build exited $rc or produced no image (see /tmp/p4rel_$name.log)"; fail=$((fail+1))
-else
+# Tanmatsu: two builds of the same app (tanmatsu/build.sh), each in its own build dir
+# and rebuilt with this tag, so no cache trap. `build` is the launcher / app store app
+# (build/tanmatsu, no remote access: the launcher loads at most 3,276,800 bytes);
+# `standalone` compiles the app with remote access (build/tanmatsu-standalone) and
+# merges it with the bootloader and the standalone partition table. Neither has an OTA
+# name to check, so check the board id ("tanmatsu", which the beta reports use) and
+# that it is not another P4 board.
+TAN_APPFS_MAX=3276800
+tanmatsu_check() {   # <app.bin> <label>: 0 if it is a Tanmatsu image carrying $TAG
+  local app="$1" ids board tagged
   ids="$(strings -a "$app" | grep -oE 'wadamesh-(tdisplay-p4|crowpanel-p4-101)[a-z0-9-]*' | sort -u || true)"
   board="$(strings -a "$app" | grep -cx 'tanmatsu' || true)"
   tagged="$(strings -a "$app" | grep -cE "(^|[^0-9a-z])${TAG}([^0-9]|$)" || true)"
   if [ -n "$ids" ] || [ "${board:-0}" = "0" ]; then
-    echo "   FAIL: image does not identify as the Tanmatsu (found: ${ids:-no board id})"; fail=$((fail+1))
+    echo "   FAIL: $2 does not identify as the Tanmatsu (found: ${ids:-no board id})"; return 1
   elif [ "${tagged:-0}" = "0" ]; then
-    echo "   FAIL: $TAG is not embedded (stale build dir?)"; fail=$((fail+1))
-  else
-    cp "$app" "$OUT/$name.bin"
-    cp "$B/wadamesh-tanmatsu-merged.bin" "$OUT/$name-merged.bin"
-    echo "   ok  $(stat -f%z "$app") bytes  id=tanmatsu"
+    echo "   FAIL: $TAG is not embedded in $2 (stale build dir?)"; return 1
   fi
+}
+name="wadamesh-tanmatsu"
+echo "=== $name  (tanmatsu/build/tanmatsu, launcher app)"
+B="$ROOT/tanmatsu/build/tanmatsu"
+rm -f "$B/application.bin"
+rc=0
+( cd "$ROOT/tanmatsu" && WADA_FW_TAG="$TAG" ./build.sh build ) > "/tmp/p4rel_$name.log" 2>&1 || rc=$?
+app="$B/application.bin"
+if [ "$rc" -ne 0 ] || [ ! -f "$app" ]; then
+  echo "   FAIL: build exited $rc or produced no image (see /tmp/p4rel_$name.log)"; fail=$((fail+1))
+elif [ "$(stat -f%z "$app")" -gt "$TAN_APPFS_MAX" ]; then
+  echo "   FAIL: $(stat -f%z "$app") bytes, over the launcher's $TAN_APPFS_MAX"; fail=$((fail+1))
+elif tanmatsu_check "$app" "the launcher app"; then
+  cp "$app" "$OUT/$name.bin"
+  echo "   ok  $(stat -f%z "$app") bytes  id=tanmatsu"
+else
+  fail=$((fail+1))
 fi
-TOTAL=$(( ${#VARIANTS[@]} + 1 ))
+echo "=== $name-merged  (tanmatsu/build/tanmatsu-standalone, standalone)"
+BS="$ROOT/tanmatsu/build/tanmatsu-standalone"
+rm -f "$BS/application.bin" "$BS/wadamesh-tanmatsu-merged.bin"
+rc=0
+( cd "$ROOT/tanmatsu" && WADA_FW_TAG="$TAG" ./build.sh standalone ) > "/tmp/p4rel_$name-merged.log" 2>&1 || rc=$?
+if [ "$rc" -ne 0 ] || [ ! -f "$BS/application.bin" ] || [ ! -f "$BS/wadamesh-tanmatsu-merged.bin" ]; then
+  echo "   FAIL: build exited $rc or produced no image (see /tmp/p4rel_$name-merged.log)"; fail=$((fail+1))
+elif tanmatsu_check "$BS/application.bin" "the standalone app"; then
+  cp "$BS/wadamesh-tanmatsu-merged.bin" "$OUT/$name-merged.bin"
+  echo "   ok  $(stat -f%z "$BS/application.bin") bytes  id=tanmatsu"
+else
+  fail=$((fail+1))
+fi
+TOTAL=$(( ${#VARIANTS[@]} + 2 ))
 
 echo
 if [ "$fail" -ne 0 ]; then

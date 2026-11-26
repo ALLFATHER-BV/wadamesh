@@ -104,11 +104,11 @@ run_tanmatsu() {
     echo "[IDF] $(env_label "$TANMATSU_ENV"): $action"
     case "$action" in
       # Not idf.py fullclean: it rejects the intentionally patched managed components.
-      fullclean) rm -rf "$ROOT/tanmatsu/build/tanmatsu" || return 1 ;;
+      fullclean) rm -rf "$ROOT/tanmatsu/build/tanmatsu-standalone" || return 1 ;;
       build)     "$TANMATSU_BUILD" standalone || return 1 ;;
       flash)
         "$TANMATSU_BUILD" standalone-flash ${port_args+"${port_args[@]}"} ${erase+"${erase[@]}"} || return 1
-        [ -n "${PORT:-}" ] || PORT="$(cat "$ROOT/tanmatsu/build/tanmatsu/standalone/port" 2>/dev/null)" ;;
+        [ -n "${PORT:-}" ] || PORT="$(cat "$ROOT/tanmatsu/build/tanmatsu-standalone/standalone/port" 2>/dev/null)" ;;
       monitor)   "$TANMATSU_BUILD" ${PORT:+-p "$PORT"} monitor || return 1 ;;
     esac
   done
@@ -389,7 +389,7 @@ if [ "$JUST_BUILD" = true ]; then
       if run_tanmatsu "${t_actions[@]}"; then
         env_end="$(date +%s)"
         size_note=""
-        bin_path="tanmatsu/build/tanmatsu/application.bin"
+        bin_path="tanmatsu/build/tanmatsu-standalone/application.bin"
         [ -f "$bin_path" ] && size_note="  $(( $(wc -c < "$bin_path") / 1024 )) KB"
         results+=("ok    $ENV_NAME  $(format_duration "$((env_end - env_start))")$size_note")
       else

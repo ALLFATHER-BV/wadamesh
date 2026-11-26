@@ -760,16 +760,34 @@
 // ---- Web console (#854) ---------------------------------------------------------
 // CAP_WEB_CONSOLE: the browser console on the WebSocket port (Mesh, Screen and Files
 // tabs) and the on-device cards that let a browser in and confirm what it asks for.
-// Not on the Tanmatsu, which serves no web UI. CAP_WEB_CONSOLE_SETTINGS: its Settings
-// and Dashboard tabs, which drive the device's own Settings pages (WebSettingsEngine.h)
-// and cost about 36 KB of flash. Not on the T-LoRa Pager: its app slot is full (the
+// CAP_WEB_CONSOLE_SETTINGS: its Settings and Dashboard tabs, which drive the device's
+// own Settings pages (WebSettingsEngine.h) and cost about 36 KB of flash. Not on the T-LoRa Pager: its app slot is full (the
 // console with both tabs overflowed it by 9 KB). The Pager never had those tabs, so
 // nothing is taken away.
-#ifndef CAP_WEB_CONSOLE
-  #if defined(HAS_TANMATSU)
-    #define CAP_WEB_CONSOLE 0
+//
+// CAP_REMOTE_ACCESS: the Remote app and everything a browser reaches through it (web
+// console, Screen mirror, web pointer). Not in the Tanmatsu's launcher / app store build:
+// the launcher loads at most 3,276,800 bytes of an AppFS app and remote access does not
+// fit. Its standalone image (tanmatsu/build.sh standalone, WADA_TANMATSU_STANDALONE) has
+// a 6 MB slot and gets it.
+#ifndef CAP_REMOTE_ACCESS
+  #if defined(HAS_TANMATSU) && !defined(WADA_TANMATSU_STANDALONE)
+    #define CAP_REMOTE_ACCESS 0
   #else
-    #define CAP_WEB_CONSOLE 1
+    #define CAP_REMOTE_ACCESS 1
+  #endif
+#endif
+#ifndef CAP_WEB_CONSOLE
+  #define CAP_WEB_CONSOLE CAP_REMOTE_ACCESS
+#endif
+// CAP_REMOTE_MODE: Remote UI, which reboots into an off-screen browser-sized display and
+// leaves a placeholder on the panel. Not on the Tanmatsu: its display is fixed to the
+// rotated 800x480 panel, and the web console's Screen tab already mirrors it.
+#ifndef CAP_REMOTE_MODE
+  #if defined(HAS_TANMATSU)
+    #define CAP_REMOTE_MODE 0
+  #else
+    #define CAP_REMOTE_MODE 1
   #endif
 #endif
 #ifndef CAP_WEB_CONSOLE_SETTINGS
