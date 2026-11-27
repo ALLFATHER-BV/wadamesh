@@ -12,7 +12,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "ui_icons.h"   // QR / emoji key labels on the P4 deck (glyph strings)
 
 #if 1
 #include "lvgl.h"
@@ -1122,12 +1121,12 @@ static void kbP4Remap(const char* const* src, const char** dst,
     auto put = [&](const char* key, lv_btnmatrix_ctrl_t ctrl) {
         if (o + 1 < 64 && c + 1 < 64) { dst[o++] = key; ctrl_out[c++] = ctrl; ++key_index; }
     };
-    auto sep = [&]() { dst[o++] = "\n"; };
+    auto sep = [&]() { if (o + 1 < 64) dst[o++] = "\n"; };
 
     // Top utility row: numbers mode, shift (widest slot — "ABC"/"abc" is three
     // glyphs), language, rotate (replaces the floating rotate arrows, which
     // hovered over the composer buttons), cursor arrows, backspace.
-    // Widths sum to 36 units: 1#=5 ABC=7 LANG=5 ROT=4 ◀=4 ▶=4 ⌫=7.
+    // Widths sum to 32 units: 1#=5 ABC=7 ROT=5 quick replies=4 emoji=4 ⌫=7.
     put("1#", LV_KEYBOARD_CTRL_BTN_FLAGS | 5);
     put(shift, LV_KEYBOARD_CTRL_BTN_FLAGS | 7);
     // Labels that actually render on this panel: the custom UI_ICON_* glyphs

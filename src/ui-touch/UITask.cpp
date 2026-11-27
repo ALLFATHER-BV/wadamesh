@@ -11443,7 +11443,7 @@ static void chatComposerAutoGrow(LvChatPanel* p) {
   // the header, stayed visible. Follow the composer instead — exact on every
   // board, in both keyboard states.
 #if defined(HAS_TDISPLAY_P4)
-  if (p->jump_btn) lv_obj_set_y(p->jump_btn, lv_obj_get_y(p->composer_row) - 40);
+  if (p->jump_btn) lv_obj_set_y(p->jump_btn, (kb ? chatCompYKb() : chatCompYOpen()) - 40);
 #endif
   lv_obj_set_height(p->msgs,    kb ? chatMsgHKb()  : chatMsgHOpen());
   // Grow the bottom inset with the composer so the newest bubble keeps clearing it.
@@ -76256,7 +76256,7 @@ static void kbQrKeyCb(lv_event_t* e) {
   const char* key = kbSelectedKeyText();
   if (!key || strcmp(key, LV_SYMBOL_PASTE) != 0) return;
   lv_event_stop_processing(e);
-  if (s_kb_panel) openQuickReplyPicker(s_kb_panel);
+  if (s_kb_panel && lv_keyboard_get_textarea(kb) == s_kb_panel->composer_ta) openQuickReplyPicker(s_kb_panel);
 }
 
 static void kbEmojiKeyCb(lv_event_t* e) {
@@ -76267,7 +76267,8 @@ static void kbEmojiKeyCb(lv_event_t* e) {
   const char* key = kbSelectedKeyText();
   if (!key || strcmp(key, "\xF0\x9F\x98\x8A") != 0) return;
   lv_event_stop_processing(e);
-  if (s_kb_panel && s_kb_panel->composer_ta) openEmojiPicker(s_kb_panel->composer_ta);
+  if (s_kb_panel && s_kb_panel->composer_ta && lv_keyboard_get_textarea(kb) == s_kb_panel->composer_ta)
+    openEmojiPicker(s_kb_panel->composer_ta);
 }
 
 // The P4 hides the composer's Send circle (the deck's OK key replaced it), so OK
@@ -76280,7 +76281,8 @@ static void kbSendKeyCb(lv_event_t* e) {
   if (mode != LV_KEYBOARD_MODE_TEXT_LOWER && mode != LV_KEYBOARD_MODE_TEXT_UPPER) return;
   const char* key = kbSelectedKeyText();
   if (!key || strcmp(key, LV_SYMBOL_OK) != 0) return;
-  if (!s_kb_panel || !s_kb_panel->composer_ta) return;
+  // The keyboard serves every text field; only the chat composer's OK sends.
+  if (!s_kb_panel || !s_kb_panel->composer_ta || lv_keyboard_get_textarea(kb) != s_kb_panel->composer_ta) return;
   const char* text = lv_textarea_get_text(s_kb_panel->composer_ta);
   if (!text || !text[0]) return;          // nothing to send: leave READY to dismiss
   lv_event_send(s_kb_panel->send_btn, LV_EVENT_CLICKED, nullptr);
@@ -76664,13 +76666,15 @@ static void buildUiTree() {
   // Hold a letter -> accent picker (issue #22). LONG_PRESSED fires on the held
   // key; the keys are NO_REPEAT so the hold doesn't auto-type.
   lv_obj_add_event_cb(g_lv.keyboard, accentLongPressCb, LV_EVENT_LONG_PRESSED, nullptr);
-  // Dark-theme keyboard styling. The container itself carries no frame: the
-  // inherited theme style drew a blue hairline along its top and bottom edges,
+  // Dark-theme keyboard styling. On the P4 the container itself carries no frame:
+  // the inherited theme style drew a blue hairline along its top and bottom edges,
   // which read as stray rules across the screen. Only the keys are outlined.
+#if defined(HAS_TDISPLAY_P4)
   lv_obj_set_style_border_width(g_lv.keyboard, 0, LV_PART_MAIN);
   lv_obj_set_style_outline_width(g_lv.keyboard, 0, LV_PART_MAIN);
   lv_obj_set_style_shadow_width(g_lv.keyboard, 0, LV_PART_MAIN);
   lv_obj_set_style_pad_all(g_lv.keyboard, 0, LV_PART_MAIN);
+#endif
   lv_obj_set_style_bg_color(g_lv.keyboard, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_color(g_lv.keyboard, lv_color_hex(COLOR_ACCENT_SURFACE),    LV_PART_ITEMS);
   lv_obj_set_style_border_color(g_lv.keyboard, lv_color_hex(COLOR_BORDER), LV_PART_ITEMS);
