@@ -1,0 +1,26 @@
+# beta_109 - sent messages keep the right date after a clock fix, device DMs go direct, map traffic lights its lines, fixed touch navigation on the V4-R8, a phone-style keyboard on the T-Display P4, web console theme switch and telemetry requests. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, fixes, new, apps.
+
+Test build, on top of beta_108. The stable build stays beta_101.
+
+# --- Fixes ---
+Sent messages carry the right date again after the clock is corrected. A clock that had run ahead (seen as 11 December) came back at every restart, and messages kept that date even after Wi-Fi, GPS or a manual set fixed the clock. Now a correction backwards resets the send timestamps and the saved clock floor (reported by THE BUDDHA).
+Direct messages sent from the device go direct once the contact's path is known, like the phone apps. Before, they always flooded. A resend still floods (reported by la8wnatorarne).
+With the trackball on scroll, Map options, the On map list and the battery chart get the trackball when they are open over the map, instead of the hidden map behind them (reported by ge0rg).
+Chats: when the chat list is full, opening a chat takes over the DM chat idle longest instead of doing nothing (#926 by oumike, #921 by zemj-czr).
+CrowPanel Advance 5.0: the panel runs at a 16 MHz pixel clock, which brings up the panels that stayed white, and the "radio not found" message names the S1/S0 switch position (reported by David).
+City locator keeps same-named Ontario municipalities apart, such as the two Hamiltons (#917 by Ve2mrx).
+
+# --- New ---
+Map traffic: the line lights up behind a pulse as it runs, and traffic you only hear shows too, as a lilac pulse along the line to the repeater your radio heard it from, or to a contact whose advert you heard directly (asked for by THE BUDDHA).
+Telemetry shows generic sensor values, such as a BME680's gas resistance (#922 by Ve2mrx).
+Heltec V4-R8: a Fixed navigation layout groups the launcher and settings into tappable sections with short status summaries, easier to reach on the small screen. Pick it in Settings, Theme, Navigation, Layout; Scrolling stays the default (#924 by guilhem).
+T-Display P4: a phone-style keyboard with OK, quick replies and emoji on the keys, and a full-width text box (#916 by kkazakov).
+Web console: Auto, Light and Dark theme switch (#918 by oumike, #914 by neilswann80).
+Web console: request telemetry from a contact's menu on the Mesh page (#925 by oumike, #923).
+Tanmatsu standalone image: remote access (#920 by oumike, #919).
+
+# --- Apps ---
+Ebook 2.0.1: a book too large for the app's memory says so instead of stopping with an error (reported by benanderson).
+Language store v36: this round's new strings are in every language.
