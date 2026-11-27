@@ -256,6 +256,7 @@ public:
     uint8_t  path[UI_RXLOG_PATH_MAX];
   };
   static const int UI_RXLOG_MAX = 16;
+  uint32_t uiRxLogSeq() const { return _rxlog_seq; }     // receptions pushed since start
   uint8_t uiRxLogCount() const { return _rxlog_cnt; }   // from the node's raw RX pushes (demo: empty)
   bool    uiRxLogGet(uint8_t i, UiRxRec& out) const {
     if (i >= _rxlog_cnt) return false;
@@ -354,6 +355,7 @@ private:
   // popup's route + scope), advert routes.
   UiRxRec  _rxlog[UI_RXLOG_MAX] = {};
   uint8_t  _rxlog_head = 0, _rxlog_cnt = 0;
+  uint32_t _rxlog_seq = 0;
   uint8_t  _last_msg_raw[256] = {0};
   uint16_t _last_msg_raw_len = 0;
   uint32_t _last_msg_raw_ms = 0;

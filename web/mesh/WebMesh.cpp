@@ -1081,6 +1081,7 @@ void MyMesh::beRxRaw(int8_t snr_q4, int8_t rssi, const uint8_t* raw, size_t len)
   }
   _rxlog_head = (uint8_t)((_rxlog_head + 1) % UI_RXLOG_MAX);
   if (_rxlog_cnt < UI_RXLOG_MAX) _rxlog_cnt++;
+  _rxlog_seq++;
 
   // Advert routes (getAdvertPath).
   if (v.ptype == PAYLOAD_TYPE_ADVERT && org_kind == 1) {
