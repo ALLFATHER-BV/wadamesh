@@ -6139,7 +6139,7 @@ static const char* webCodeText(char* buf, size_t n) {
   return buf;
 }
 
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_MODE
 #define WADAMESH_MARK_DEFINE        // the one copy of the pixels (main.cpp's boot screen uses it too)
 #include "../wadamesh_mark_rgb.h"   // anti-aliased mesh mark (RGB565), same artwork as the boot splash
 // Physical-panel placeholder shown while remote mode renders the UI off-screen. Drawn
@@ -6339,7 +6339,7 @@ static void remoteTouchTick() {
 #endif
 #endif
 
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
 // ===== Web UI mirror: coalesced, rate-capped, backpressure-gated streaming =====
 // The flush hook copies each drawn band into a full-screen shadow buffer and grows
 // a dirty bounding box (cheap, no network). webMirrorTick() then RLE-encodes just
@@ -6385,22 +6385,20 @@ static bool webMirrorEnsureBufs() {
   return s_web_fb && s_web_band_buf && s_web_rle_buf;
 }
 
-// Flush hook: copy a just-drawn band into the shadow buffer + grow the dirty bbox.
-// Runs on the LVGL thread only when a mirror client is connected.
-static void webMirrorOnFlush(int x, int y, int w, int h, const uint16_t* px) {
-  if (w <= 0 || h <= 0 || !webMirrorEnsureBufs()) return;
-  for (int row = 0; row < h; row++) {
-    int dy = y + row;
-    if (dy < 0 || dy >= s_web_fb_h) continue;
-    int x0 = x, cw = w, sxoff = 0;
-    if (x0 < 0) { cw += x0; sxoff = -x0; x0 = 0; }
-    if (x0 + cw > s_web_fb_w) cw = s_web_fb_w - x0;
-    if (cw > 0)
-      memcpy(s_web_fb + (size_t)dy * s_web_fb_w + x0,
-             px + (size_t)row * w + sxoff, (size_t)cw * 2);
-  }
-  int bx1 = x < 0 ? 0 : x, by1 = y < 0 ? 0 : y;
-  int bx2 = x + w - 1, by2 = y + h - 1;
+// Tanmatsu: LVGL turns the 480x800 panel to the 800x480 UI in software, so each band
+// reaches the flush already rotated into the panel frame, while the mirror (and the
+// browser's pointer) work in the UI frame. True while that 270 degree turn is applied.
+static inline bool webMirrorSwRot270() {
+#if defined(HAS_TANMATSU)
+  return g_lv.disp_drv.rotated == LV_DISP_ROT_270;
+#else
+  return false;
+#endif
+}
+
+static void webMirrorGrowDirty(int bx1, int by1, int bx2, int by2) {
+  if (bx1 < 0) bx1 = 0;
+  if (by1 < 0) by1 = 0;
   if (bx2 >= s_web_fb_w) bx2 = s_web_fb_w - 1;
   if (by2 >= s_web_fb_h) by2 = s_web_fb_h - 1;
   if (bx2 < bx1 || by2 < by1) return;
@@ -6411,6 +6409,38 @@ static void webMirrorOnFlush(int x, int y, int w, int h, const uint16_t* px) {
     if (bx2 > s_web_dx2) s_web_dx2 = bx2;
     if (by2 > s_web_dy2) s_web_dy2 = by2;
   }
+}
+
+// Flush hook: copy a just-drawn band into the shadow buffer + grow the dirty bbox.
+// Runs on the LVGL thread only when a mirror client is connected.
+static void webMirrorOnFlush(int x, int y, int w, int h, const uint16_t* px) {
+  if (w <= 0 || h <= 0 || !webMirrorEnsureBufs()) return;
+  if (webMirrorSwRot270()) {
+    // Panel pixel (x, y) is UI pixel (y, panel_w - 1 - x): turn the band back.
+    const int pw = g_lv.disp_drv.hor_res;
+    for (int row = 0; row < h; row++) {
+      const int ux = y + row;
+      if (ux < 0 || ux >= s_web_fb_w) continue;
+      const uint16_t* src = px + (size_t)row * w;
+      for (int col = 0; col < w; col++) {
+        const int uy = pw - 1 - (x + col);
+        if (uy >= 0 && uy < s_web_fb_h) s_web_fb[(size_t)uy * s_web_fb_w + ux] = src[col];
+      }
+    }
+    webMirrorGrowDirty(y, pw - x - w, y + h - 1, pw - 1 - x);
+    return;
+  }
+  for (int row = 0; row < h; row++) {
+    int dy = y + row;
+    if (dy < 0 || dy >= s_web_fb_h) continue;
+    int x0 = x, cw = w, sxoff = 0;
+    if (x0 < 0) { cw += x0; sxoff = -x0; x0 = 0; }
+    if (x0 + cw > s_web_fb_w) cw = s_web_fb_w - x0;
+    if (cw > 0)
+      memcpy(s_web_fb + (size_t)dy * s_web_fb_w + x0,
+             px + (size_t)row * w + sxoff, (size_t)cw * 2);
+  }
+  webMirrorGrowDirty(x, y, x + w - 1, y + h - 1);
 }
 
 // Encode + queue a rect region from the shadow buffer at full resolution. Split into
@@ -6485,7 +6515,7 @@ static void lvglFlushImpl(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_col
   if (!color_p) { lv_disp_flush_ready(disp_drv); return; }   // never deref a NULL draw buffer (OOM at boot)
   int32_t w = area->x2 - area->x1 + 1;
   int32_t h = area->y2 - area->y1 + 1;
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_MODE
   // REMOTE mode: the UI renders to an off-screen web display — never write the
   // physical panel (wrong resolution). Only capture + stream the band.
   if (s_remote_mode) {
@@ -6549,7 +6579,7 @@ static void lvglFlushImpl(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_col
                (size_t)cw * sizeof(lv_color_t));
     }
   }
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
   // Web UI mirror: copy this flushed band into the shadow buffer (one bool when off).
   if (g_web_mirror.active())
     webMirrorOnFlush(area->x1, area->y1, w, h, reinterpret_cast<const uint16_t*>(color_p));
@@ -9188,7 +9218,7 @@ static bool ssaverMiles() {
 #endif
 #endif
 
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
 // Web UI mirror: a virtual pointer indev fed by a phone browser's taps over the
 // WebSocket server (WebMirror). Drives the SAME LVGL UI as the physical touch;
 // idle -> released so it never fights the real touchscreen.
@@ -9207,6 +9237,10 @@ static void webPointerRead(lv_indev_drv_t* drv, lv_indev_data_t* data) {
   if (g_web_mirror.readPointer(&x, &y, &pr) && !webRemoteInputBlocked()) {
     data->point.x = x;
     data->point.y = y;
+    if (webMirrorSwRot270()) {   // LVGL turns pointer input itself: hand it the panel-frame point
+      data->point.x = static_cast<lv_coord_t>(g_lv.disp_drv.hor_res - 1 - y);
+      data->point.y = static_cast<lv_coord_t>(x);
+    }
     data->state = pr ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
   } else {
     data->state = LV_INDEV_STATE_RELEASED;
@@ -28491,7 +28525,7 @@ static const uint32_t TERM_C_BANNER = 0x7f8c99;  // opening banner (dim)
 // loop task (see the s_term_log_box note above). Oldest lines prune past
 // TERM_MAX_LINES; the view always scrolls to the newest line.
 static void termLogAppendC(uint32_t color, const char* prefix, const char* text) {
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
   // Mirror every terminal line to the web mesh terminal too (before the on-device box
   // null-check, so it works headless when the console isn't open). One funnel = full parity.
   if (text && g_web_mirror.terminalOn()) {
@@ -29097,7 +29131,7 @@ static bool terminalHandleVirtualKeyboardReady() {
 // commands, device->browser framed JSON via g_web_mirror.pushTermData). Runs on
 // the UI loop, single-threaded, so a static PSRAM scratch buffer is safe.
 // ============================================================================
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
 static char*          s_webdata_buf  = nullptr;
 static const size_t   WEBDATA_BUF    = 16000;
 static volatile bool  s_web_rx_nudge = false;   // set by mesh callbacks; the UI loop does the actual pushTermData (keeps it single-producer)
@@ -29588,7 +29622,7 @@ static bool handleWebDataCmd(const char* cmd) {
   if (a[0] == 'r' && a[1] == ' ' && g_lv.task)    { g_lv.task->markThreadRead(atoi(a + 2)); webPushThreads(); return true; }
   return true;   // unknown '@' -> swallow (never run as a terminal command)
 }
-#endif  // !HAS_TANMATSU
+#endif  // CAP_REMOTE_ACCESS
 
 #if CAP_CONSOLE
 // Outside the !HAS_TANMATSU block above ON PURPOSE. The Settings row that binds
@@ -35538,7 +35572,7 @@ static void openFileTransferPage() {
 }
 #endif
 
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
 // ============================================================================
 // REMOTE app (app-drawer tile -> APPACT_REMOTE): reboot into "remote mode" — the
 // full UI renders to an off-screen 480x800 display served to a browser, and the
@@ -35572,6 +35606,7 @@ static void closeRemotePage() {
   }
 }
 
+#if CAP_REMOTE_MODE
 static void remoteToggleCb(lv_event_t* e) {
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   touchPrefsSetRemoteMode(on);
@@ -35581,6 +35616,7 @@ static void remoteToggleCb(lv_event_t* e) {
   rebootWithNotice(on ? TR("Entering remote mode - restarting\xE2\x80\xA6")
                       : TR("Leaving remote mode - restarting\xE2\x80\xA6"));
 }
+#endif
 
 #if CAP_CONSOLE
 // ---- console bridges: unread state ------------------------------------------
@@ -35601,6 +35637,7 @@ int consoleHostHistoryAt(const char* thread, int back, char* sender, size_t sc,
 }
 #endif
 
+#if CAP_REMOTE_MODE
 static void remoteLandscapeCb(lv_event_t* e) {
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   touchPrefsSetRemoteLandscape(on);
@@ -35613,6 +35650,7 @@ static void remoteLandscapeCb(lv_event_t* e) {
                             : TR("Portrait set - applies when remote mode starts."), 2400);
   }
 }
+#endif
 
 // ---- Web console: one switch for the browser console (Mesh, Screen and Files tabs on the
 // device's web port). New browsers need an OK on this screen (g_web_session); "Always
@@ -36138,6 +36176,7 @@ static void openRemotePage() {
   lv_obj_set_style_text_font(endl, &g_font_14, LV_PART_MAIN);
   lv_obj_center(endl);
 
+#if CAP_REMOTE_MODE
   // ---- 2. Remote UI (off-screen mirror; reboots) ----
   lv_obj_t* uh = lv_label_create(s_remote_root);
   lv_label_set_text(uh, TR("Remote UI"));
@@ -36174,6 +36213,7 @@ static void openRemotePage() {
   if (on) lv_obj_add_state(sw2, LV_STATE_CHECKED);
   lv_obj_add_event_cb(sw2, remoteToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_move_to_index(row, lv_obj_get_index(expl));   // toggle sits ABOVE its explanation
+#endif  // CAP_REMOTE_MODE
 
 #if CAP_CONSOLE
   // ---- 2b. Console mode (no LVGL at all; reboots) ----
@@ -36216,6 +36256,7 @@ static void openRemotePage() {
   lv_obj_move_to_index(crow, lv_obj_get_index(cexpl));
 #endif
 
+#if CAP_REMOTE_MODE
   lv_obj_t* lrow = lv_obj_create(s_remote_root);
   lv_obj_remove_style_all(lrow);
   lv_obj_set_size(lrow, cw, SC(42));
@@ -36237,6 +36278,7 @@ static void openRemotePage() {
   lv_obj_align(lsw, LV_ALIGN_RIGHT_MID, 0, 0);
   if (touchPrefsGetRemoteLandscape()) lv_obj_add_state(lsw, LV_STATE_CHECKED);
   lv_obj_add_event_cb(lsw, remoteLandscapeCb, LV_EVENT_VALUE_CHANGED, nullptr);
+#endif  // CAP_REMOTE_MODE
 
 #if CAP_WEB_FIXED_CODE
   // ---- 3. Access code (#837) ----
@@ -36307,7 +36349,7 @@ static void openRemotePage() {
   lv_obj_set_width(aexpl, cw);
 #endif  // CAP_WEB_FIXED_CODE
 }
-#endif  // !HAS_TANMATSU
+#endif  // CAP_REMOTE_ACCESS
 
 static void openSpectrumPage() {
   closeSpectrumPage();
@@ -56590,7 +56632,7 @@ static void auroraTick(lv_timer_t*) {
 #if CAP_LOCK_SCREEN
   if (s_lock_root) return;
 #endif
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
   if (g_web_mirror.active()) return;
 #endif
   for (lv_indev_t* in = lv_indev_get_next(nullptr); in; in = lv_indev_get_next(in))
@@ -62900,7 +62942,7 @@ static void luaStoreRebuildList() {
     section(TR("Show in the app drawer"));
     struct { const char* name; uint32_t bit; } builtins[] = {
       { "Spectrum", APPHIDE_SPECTRUM }, { "Discover", APPHIDE_DISCOVER },
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
       { "Remote", APPHIDE_REMOTE },
 #endif
 #if defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
@@ -63939,7 +63981,7 @@ static const AppTileDef k_app_tiles[] = {
 #if defined(HAS_TOUCH_UI)
   { UI_ICON_SQUARE_TERMINAL,    "Terminal",  APPACT_TERMINAL,  HUE_SYS },
 #endif
-#if !defined(HAS_TANMATSU) && CAP_SCREEN_MIRROR
+#if CAP_REMOTE_ACCESS && CAP_SCREEN_MIRROR
   { UI_ICON_MONITOR,            "Remote",    APPACT_REMOTE,    HUE_SYS },     // web console (incl. screen mirror) + Remote UI
 #endif
   { UI_ICON_SLIDERS_HORIZONTAL, "Settings",  APPACT_SETTINGS,  HUE_SYS },     // "!" when an update waits
@@ -64326,7 +64368,7 @@ static void appLaunch(int act, lv_event_t* e) {
     case APPACT_SIGNAL:    openSignalInfoPopup(); return;   // signal/traffic + auto-discover settings
     case APPACT_SPECTRUM:  openSpectrumPage();   return;   // swept RF spectrum analyzer (borrows the radio)
     case APPACT_DISCOVER:  openDiscoverPage();   return;   // active node-discovery sweep + nearby list
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
     case APPACT_VNC:                                       // no tile since #908; the mirror is the web console's Screen tab
     case APPACT_REMOTE:    openRemotePage();     return;   // web console switch, trusted browsers, Remote UI
 #endif
@@ -64455,7 +64497,7 @@ static bool isUiIconGlyph(const char* g) {
 // Remote UI session, the USB file link. Its tile carries the redesign's live mark.
 static bool appTileLive(int act) {
   switch (act) {
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
     case APPACT_REMOTE: return s_remote_mode || g_web_mirror.active();
 #endif
 #if CAP_USB_FILES
@@ -64466,7 +64508,7 @@ static bool appTileLive(int act) {
 }
 static uint32_t appTilesLiveMask() {
   uint32_t m = 0;
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
   if (appTileLive(APPACT_REMOTE)) m |= 2u;
 #endif
 #if CAP_USB_FILES
@@ -65360,7 +65402,7 @@ static bool tsNoClient()   { return the_mesh.getProtoNumClients() == 0 && !g_usb
 // client of any transport already holds the gate (tsNoClient). The one Wi-Fi user that is
 // not a companion client is someone watching the screen over the web mirror.
 static bool tsWifiOff() {
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
   return !g_web_mirror.active();
 #else
   return true;
@@ -76846,7 +76888,7 @@ void UITask::stepComposerAction(int delta) { _composer_action_idx += delta; }
 void UITask::userLedHandler() {}
 
 void UITask::discoveredContact(const ContactInfo& contact, bool is_new, uint8_t path_len) {
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
   s_web_rx_nudge = true;
 #endif
   /* `is_new=false` → contact is already in contacts[]; nothing to do (the
@@ -76926,7 +76968,7 @@ void UITask::onThreadsChanged() {
    * channels / contacts added via the companion-serial protocol show up
    * immediately instead of after the 4 s backstop. */
   _next_mesh_thread_refresh = 0;
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
   /* Nudge any Contacts/Chats web client to refetch (new/changed message). This runs
    * in the mesh callback context; flag it and let the UI loop do the pushTermData so
    * the data ring stays single-producer (the UI loop is the only other producer). */
@@ -82054,7 +82096,7 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
   }
   ++_msgcount;
   markMsgsDirty();
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
   s_web_rx_nudge = true;   // any new/changed message -> nudge the Contacts/Chats web client to refetch
 #endif
   return t_idx;
@@ -82085,7 +82127,7 @@ void UITask::onMessageAcked(uint32_t ack_hash) {
 #else
   (void)any;
 #endif
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
   if (any) s_web_rx_nudge = true;   // delivery flipped to ✓✓ -> refresh the web chat
 #endif
 }
@@ -83347,7 +83389,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // DISPLAY_ROTATION=2 with no touch transform, exactly as on the V4. UI init
     // below turns the panel back to it: the boot logo may have left it landscape.
 #endif
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_MODE
     // REMOTE mode: render the UI to a virtual 480x800 PORTRAIT display for the web
     // (headless/browser use). No physical-panel rotation — the panel is a placeholder.
     s_remote_mode = touchPrefsGetRemoteMode();
@@ -83664,7 +83706,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     }
 #endif
 
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
     // Web UI mirror: stream this display + accept a phone browser's taps as a second
     // pointer indev (opt-in via the VNC/REMOTE apps; see WebMirror / the WS server).
     // Size the remote ring to just above ONE frame (w*h*2 + 48 KB) instead of a fixed
@@ -83774,7 +83816,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     epaperScrollControlsSync(true);
   #endif
 
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_MODE
     // Remote boot completed (display + full UI built without crashing) -> disarm the
     // bootloop guard now, not 8s into the loop. A rotate/orientation reboot re-enters
     // remote and completes begin() in a few seconds, so clearing here means back-to-back
@@ -88346,10 +88388,11 @@ void UITask::loop() {
 #if CAP_USB_FILES
   if (s_usbfiles) s_usbfiles->tick();
 #endif
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
   // REMOTE mode: draw/refresh the physical-panel placeholder (first pass via the IP
   // sentinel, then whenever the IP changes), and clear the bootloop guard once this
   // boot has run a few seconds (proving it came up cleanly).
+#if CAP_REMOTE_MODE
   if (s_remote_mode) {
     if (s_rmt_boot_guard && now > 8000) s_rmt_boot_guard = 0;
     // Rotate button on the web page -> flip orientation by rebooting into the other axis.
@@ -88370,6 +88413,7 @@ void UITask::loop() {
     uint32_t rip = (WiFi.status() == WL_CONNECTED) ? (uint32_t)WiFi.localIP() : 0;
     if (rip != s_remote_ph_ip) drawRemotePlaceholder();
   }
+#endif
   // Web mesh terminal: run any command the browser typed through the exact same dispatch
   // as the on-device console (chat commands else the config CLI). Output streams back via
   // the termLogAppendC hook. Own the CLI sink while active + the on-device console isn't open.
@@ -89199,7 +89243,7 @@ void UITask::loop() {
   // open chat so the sent bubble's repeat tag ticks up live.
   if (the_mesh.takeEchoDirty()) {
     g_lv.dirty_timeline = true;
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
     s_web_rx_nudge = true;   // repeat-heard tag ticked up -> refresh the web chat too
 #endif
   }
@@ -89752,7 +89796,7 @@ void UITask::loop() {
     }
   }
 #endif
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
   // A browser can't hold the trackball or press BOOT: while the screen is manually
   // locked the web page shows an Unlock button, which lands here (#506).
   g_web_mirror.setLocked(_manual_lock);
@@ -90013,7 +90057,7 @@ void UITask::loop() {
   // updateTrackball -> navMoveDir).
   if (s_kbd_nav || s_tb_nav) navMaybeRebuild();
 #endif
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
   // Web UI mirror: on a new connect / heal, invalidate the whole screen so LVGL
   // redraws it into the shadow buffer (takeFullRepaint is armed by the WS server).
   if (g_web_mirror.active() && g_web_mirror.takeFullRepaint())
@@ -90036,7 +90080,7 @@ void UITask::loop() {
   (defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9))
   sdRestoreRun();   // intentionally outside the LVGL event/render call stack
 #endif
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
   webMirrorTick();   // coalesced, rate-capped, backpressure-gated send of the dirty region
 #endif
 #if defined(HAS_TANMATSU)
@@ -90272,7 +90316,7 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_blocked_modal),         []{ blockedModalClose(); },          PF_COUNT | PF_SWIPE },
   { P_OPEN(s_regions_modal),         []{ regionsModalClose(); },          PF_COUNT },   // was in no registry at all (#449)
   { P_OPEN(s_wifi_scan_popup),       []{ wifiScanPopupClose(); },         PF_COUNT },
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
   { P_OPEN(s_web_ask),               []{ webAskClose(); },                PF_COUNT },
   { P_OPEN(s_remote_root),           []{ closeRemotePage(); },            PF_COUNT },
 #endif
@@ -90517,7 +90561,7 @@ static void docAuditTour() {
   openSignalInfoPopup();   auditShot("signal");     auditDismissAll();
   openMentionsScreen();    auditShot("mentions");   closeMentionsScreen(); docSettle(4);
   openDiscoverPage();      auditShot("discover");   auditDismissAll();
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
   openRemotePage();        auditShot("vnc");        auditDismissAll();
 #endif
 #if CAP_LUA_APPS

@@ -283,12 +283,20 @@ badge-bsp 2.x; `scripts/tanmatsu-appstore-publish.sh` derives it from
 
 ## Standalone web-flash image (#806)
 
-`tanmatsu/build.sh standalone` wraps the same `application.bin` in a full-flash image,
-`build/tanmatsu/wadamesh-tanmatsu-merged.bin` (bootloader @0x2000, partition table
-@0x8000, app @0x20000), using `partition_tables/wadamesh_standalone.csv`: two 6 MB OTA
+`tanmatsu/build.sh standalone` compiles the app with remote access
+(`WADA_TANMATSU_STANDALONE`, see below) in its own build directory and wraps it in a
+full-flash image, `build/tanmatsu-standalone/wadamesh-tanmatsu-merged.bin` (bootloader
+@0x2000, partition table @0x8000, app @0x20000), using `partition_tables/wadamesh_standalone.csv`: two 6 MB OTA
 slots (the 3.2 MB app does not fit the launcher table's 2 MB `ota_0`) and `locfd` at the
 same 0xC20000 offset as the launcher table, so WADAMESH data survives switching. It
 **replaces the launcher**; restore it from https://recovery.tanmatsu.cloud/.
+
+Remote access (the Remote app: web console, Screen mirror, browser taps) is only in
+this image. With it the app is past the 3,276,800 bytes the launcher loads from AppFS,
+so `./build.sh build` (the launcher / app store app, `build/tanmatsu`) leaves it out
+(`CAP_REMOTE_ACCESS` in `src/ui-touch/device_caps.h`). Remote UI mode (reboot into an
+off-screen browser-sized display) is not offered on the Tanmatsu either way; the Screen
+tab mirrors the panel, un-rotating LVGL's software 270 degree turn.
 
 Because the merged image is written at 0x0, its 0xFF padding erases NVS (0x19000) as
 well as otadata, so a web install starts at the setup wizard. `standalone-flash` writes
