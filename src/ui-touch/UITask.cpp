@@ -28633,8 +28633,7 @@ static void termDoSend(bool is_channel, const uint8_t* pub, int16_t chan_slot,
   arabicUnshape(text, body, sizeof(body));   // standard Arabic letters (#582), whole characters
 
   uint32_t ts = the_mesh.getRTCClock()->getCurrentTimeUnique();
-  if (ts <= s_last_term_tx_ts) ts = s_last_term_tx_ts + 1;
-  s_last_term_tx_ts = ts;
+  ts = core_clock_ratchets::nextSendTs(ts, s_last_term_tx_ts);
 
   char r[MAX_TEXT_LEN + 48];
   if (is_channel) {
@@ -82144,8 +82143,7 @@ bool UITask::sendComposerToActiveThread(const char* override_text) {
       return false;
     }
     uint32_t ts = the_mesh.getRTCClock()->getCurrentTimeUnique();
-    if (ts <= s_last_ui_tx_ts) ts = s_last_ui_tx_ts + 1;
-    s_last_ui_tx_ts = ts;
+    ts = core_clock_ratchets::nextSendTs(ts, s_last_ui_tx_ts);
     {
       char tx_line[96];
       snprintf(tx_line, sizeof(tx_line), "TX CH ts=%lu len=%u",
@@ -82233,8 +82231,7 @@ bool UITask::sendComposerToActiveThread(const char* override_text) {
   }
   uint32_t expected_ack = 0, est_timeout = 0;
   uint32_t ts = the_mesh.getRTCClock()->getCurrentTimeUnique();
-  if (ts <= s_last_ui_tx_ts) ts = s_last_ui_tx_ts + 1;
-  s_last_ui_tx_ts = ts;
+  ts = core_clock_ratchets::nextSendTs(ts, s_last_ui_tx_ts);
   uint8_t attempt = s_ui_tx_attempt++;
   if (attempt < 4) {
     attempt = 4;
@@ -88225,6 +88222,13 @@ void UITask::loop() {
   // a write on the first pass cost every boot a ~1 s prefs snapshot on the card,
   // in the middle of the boot animation (the T-Deck's card shares the display bus).
   { static unsigned long s_floor_due = 0;
+    static uint32_t s_floor_step_backs = 0;
+    if (rtc_clock.stepBacks() != s_floor_step_backs) {
+      // A trusted set pulled a floor that ran ahead back to real time: persist the lower
+      // floor now, or the next boot restores the bad date (touchPrefsSetClockFloor only grows).
+      s_floor_step_backs = rtc_clock.stepBacks();
+      touchPrefsLowerClockFloor(rtc_clock.getFloor());
+    }
     if (!s_floor_due) {
       s_floor_due = now + 60000UL;
     } else if (now >= s_floor_due) {

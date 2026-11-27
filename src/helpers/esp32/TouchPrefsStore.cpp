@@ -1514,6 +1514,14 @@ bool touchPrefsSetClockFloor(uint32_t epoch) {
   s_cfg.clock_floor = epoch;
   return cfgFlush();
 }
+// After a trusted backward correction (ClockFloorRTC::stepBacks): the persisted floor was
+// built on a clock that ran ahead, and keeping it would restore the bad time at every boot.
+bool touchPrefsLowerClockFloor(uint32_t epoch) {
+  if (!s_begun) touchPrefsBegin();
+  if (epoch >= s_cfg.clock_floor) return true;
+  s_cfg.clock_floor = epoch;
+  return cfgFlush();
+}
 
 // Periodic self-advert intervals (0 = off). Validation mirrors MeshCore: flood in hours (cap 168);
 // local zero-hop in minutes, 0 or 60-240 (MeshCore's MIN_LOCAL_ADVERT_INTERVAL is 60).

@@ -6,7 +6,15 @@
 
 namespace mesh {
 class RTCClock {
+  uint32_t last_unique;   // as the core's: private, no reset
+protected:
+  RTCClock() { last_unique = 0; }
 public:
+  uint32_t getCurrentTimeUnique() {
+    uint32_t t = getCurrentTime();
+    if (t <= last_unique) return ++last_unique;
+    return last_unique = t;
+  }
   virtual ~RTCClock() {}
   virtual uint32_t getCurrentTime() = 0;
   virtual void setCurrentTime(uint32_t time) = 0;

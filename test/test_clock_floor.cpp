@@ -214,6 +214,35 @@ int main() {
       assert(r.clk.localRecordCeiling() == 0 && !r.clk.raiseFloorFromLocalRecord(NOW + 60)); }
   }
 
+  // Discord, beta_108: a floor 14 days ahead (11 Dec on 27 Nov). Something stamped
+  // before the sync, then Wi-Fi time landed: the status bar was right, every sent
+  // message still said 11 Dec (the core's unique ratchet), and the next boot brought
+  // the floor back. The trusted backward set resets the ratchet and counts a step back
+  // for the persister and the DM ratchet.
+  {
+    Rig r;
+    const uint32_t AHEAD = NOW + 14u * 86400u;
+    r.clk.seedFloor(AHEAD); r.hw().hw = NOW; g_sys = NOW;
+    assert(r.clk.getCurrentTimeUnique() == AHEAD);       // the boot advert, on the bad floor
+    assert(r.clk.getCurrentTimeUnique() == AHEAD + 1);
+    assert(r.clk.stepBacks() == 0);
+    r.clk.setCurrentTime(NOW + 5);                       // the NTP sync
+    assert(r.clk.getFloor() == NOW + 5 && r.clk.stepBacks() == 1);
+    assert(r.clk.getCurrentTimeUnique() == NOW + 5);     // the next message has the real date
+    assert(r.clk.getCurrentTimeUnique() == NOW + 6);     // and is still unique
+    r.clk.setCurrentTime(NOW + 30);                      // a small forward correction: no step back
+    assert(r.clk.stepBacks() == 1);
+    r.clk.setCurrentTime(NOW + 30 - 5 * 60);             // inside TRUSTED_BACK_CAP: the floor holds
+    assert(r.clk.stepBacks() == 1 && r.clk.getFloor() == NOW + 30);
+  }
+  // Our own per-sender ratchets give way the same way.
+  {
+    uint32_t last = NOW + 14u * 86400u;
+    assert(core_clock_ratchets::nextSendTs(NOW, last) == NOW && last == NOW);
+    assert(core_clock_ratchets::nextSendTs(NOW, last) == NOW + 1);
+    assert(core_clock_ratchets::nextSendTs(NOW - 60, last) == NOW + 2);   // a small step back stays monotonic
+  }
+
   printf("test_clock_floor: ok\n");
   return 0;
 }

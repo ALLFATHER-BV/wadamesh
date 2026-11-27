@@ -17,6 +17,7 @@
 #endif
 #endif
 #include <helpers/AdvertDataHelpers.h>
+#include <helpers/CoreChatRatchet.h>
 #include "helpers/CompanionRetryPolicy.h"
 #include "helpers/esp32/WdtHeavyGuard.h"   // eviction blob deletes are SPIFFS-GC-prone (#222)
 #include <helpers/HttpOtaDisplayState.h>
@@ -595,8 +596,7 @@ void MyMesh::pushMeshcomodReply(const char* text, bool immediate_current) {
     out_frame[j++] = TXT_TYPE_PLAIN;
     uint32_t ts = getRTCClock()->getCurrentTimeUnique();
     // Some clients coalesce messages by sender+timestamp; enforce strictly monotonic ts.
-    if (ts <= s_meshcomod_last_reply_ts) ts = s_meshcomod_last_reply_ts + 1;
-    s_meshcomod_last_reply_ts = ts;
+    ts = core_clock_ratchets::nextSendTs(ts, s_meshcomod_last_reply_ts);
     memcpy(&out_frame[j], &ts, 4);
     j += 4;
 
@@ -6657,6 +6657,15 @@ void MyMesh::checkSerialInterface() {
 
 void MyMesh::loop() {
   BaseChatMesh::loop();
+#if defined(ESP32)
+  // A clock that ran ahead was corrected (ClockFloorRTC::setCurrentTime): the core's DM
+  // ratchet would keep stamping from the old time until a reboot. See CoreClockRatchets.h.
+  { static uint32_t s_txt_step_backs = 0;
+    if (rtc_clock.stepBacks() != s_txt_step_backs) {
+      s_txt_step_backs = rtc_clock.stepBacks();
+      core_clock_ratchets::resetTxt(*this);
+    } }
+#endif
   companionRetryService();
   drainPendingBlobDeletes();   // evicted contacts' blobs, off the packet path (#222)
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <helpers/AutoDiscoverRTCClock.h>
+#include <helpers/CoreClockRatchets.h>
 #include <sys/time.h>
 
 // Monotonic clock floor for outgoing protocol timestamps (issue #89 follow-up).
@@ -50,6 +51,7 @@ private:
   uint32_t    _floor = 0;
   uint32_t    _pending_peer_ts = 0;
   uint32_t    _pending_peer_id = 0;
+  volatile uint32_t _step_backs = 0;   // trusted backward corrections this boot
   ClockSource _source = ClockSource::Seed;
   bool        _hw_present = false;
 
@@ -103,7 +105,17 @@ public:
     if (time <= MIN_VALID_EPOCH || time > MAX_PLAUSIBLE_EPOCH) return;  // garbage set — ignore, whatever the source
     AutoDiscoverRTCClock::setCurrentTime(time);
     pushSystemClock(time);
-    if (_floor > time + TRUSTED_BACK_CAP) _floor = time;
+    if (_floor > time + TRUSTED_BACK_CAP) {
+      _floor = time;
+      // The clock ran ahead and has been corrected. The core's own send ratchet would
+      // keep stamping from the old time until a reboot (seen with a floor 14 days
+      // ahead: the status bar showed the right date, every sent message the wrong
+      // one), and the persisted floor would bring the bad time back at every boot.
+      // Reset the ratchet here; MyMesh resets the DM ratchet and UITask lowers the
+      // persisted floor when they see _step_backs move.
+      core_clock_ratchets::resetUnique(*this);
+      _step_backs = _step_backs + 1;
+    }
     // An accepted set is real time: lift the floor to it. A hardware clock whose write
     // did not take then reads below the floor, and getCurrentTime() follows the system
     // clock this set started (#746). Without it a chip stuck at the seed (or frozen at
@@ -202,6 +214,8 @@ public:
     if (persisted > _floor) _floor = persisted;
   }
   uint32_t getFloor() const { return _floor; }
+  // Count of trusted backward corrections this boot; consumers keep the last value seen.
+  uint32_t stepBacks() const { return _step_backs; }
 
   // Mesh peer time (#835). A node with no clock of its own (no RTC chip, Wi-Fi and GPS
   // off) otherwise sits on its persisted floor, possibly days stale. Peer time is the

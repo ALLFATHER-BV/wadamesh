@@ -305,6 +305,7 @@ bool    touchPrefsGetRetryEcho();      // v44/v45: auto-retry sends until echoed
 bool    touchPrefsSetRetryEcho(bool on);
 uint32_t touchPrefsGetClockFloor();               // monotonic send-timestamp floor (#89)
 bool    touchPrefsSetClockFloor(uint32_t epoch);  // only ever grows; no-op below current
+bool    touchPrefsLowerClockFloor(uint32_t epoch); // after a trusted backward clock correction
 
 /* Periodic self-advert intervals (the standard MeshCore flood/local advert, on a timer). 0 = off.
  * Flood in hours; local zero-hop in minutes (0 or 60-240). Scheduled in UITask::loop via sendAdvert. */
