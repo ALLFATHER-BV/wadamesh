@@ -29475,8 +29475,12 @@ static void webTelemetryReply(const uint8_t* key, const char* text, const char* 
 static void webTelemetryTick(unsigned long now) {
   if (!s_web_telem_deadline_ms || (long)(now - s_web_telem_deadline_ms) < 0) return;
   s_web_telem_deadline_ms = 0;
-  the_mesh.cancelUIDeferredLogin();   // a late LOGIN-OK must not fire a stale REQ
-  the_mesh.cancelUIPingPending();
+  // A late LOGIN-OK must not fire a stale REQ, but the pending slot may by now belong to
+  // a Request or Ping started on the device itself: leave that one to its own timeout.
+  if (!s_telem_manual_pending && !s_ui_ping_deadline_ms) {
+    the_mesh.cancelUIDeferredLogin();
+    the_mesh.cancelUIPingPending();
+  }
   webPushTelemetry(2, s_web_telem_name, "No reply", nullptr);
 }
 
@@ -77743,7 +77747,7 @@ void UITask::onTelemetryReply(const ContactInfo& contact, const uint8_t* data, s
   copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm),
                                  contact.name[0] ? contactShownName(contact.id.pub_key, contact.name) : "node");
   if (!data || len == 0) {
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
     webTelemetryReply(contact.id.pub_key, "Empty telemetry", nullptr);
 #endif
     char msg[64];
@@ -77876,7 +77880,7 @@ done: {
     hp += snprintf(hex + hp, sizeof(hex) - (size_t)hp, "%02X ", data[i]);
   }
   if (hp > 0 && hex[hp - 1] == ' ') hex[hp - 1] = '\0';
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
   {
     char raw[16];
     snprintf(raw, sizeof raw, "%uB", (unsigned)len);
@@ -88741,7 +88745,7 @@ void UITask::loop() {
     if (s_telemetry_root) openTelemetryWindow(s_telem_node, s_telem_name, TELEM_FAILED);
   }
 #endif
-#if !defined(HAS_TANMATSU)
+#if CAP_REMOTE_ACCESS
   webTelemetryTick(now);
 #endif
 
