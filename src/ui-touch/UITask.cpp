@@ -43261,17 +43261,21 @@ static void freeMapMarkers() {
 
 // ---- Traffic pulses (#827) ------------------------------------------------------
 // A message or ACK leaving or arriving shows as a dot running along the line between
-// us and that contact for about a second; channel traffic, and a contact with no
+// us and that contact for about a second, lighting the line behind it as it goes.
+// Traffic we only hear shows the same way along the line to the node our radio heard
+// it from: the last repeater of a flood, or a contact's own advert (mapPulseFromRxLog).
+// Channel traffic, and a contact with no
 // position, shows as a ring spreading out from our own marker. With no position of our
 // own (no fix yet, none set by hand) the ring spreads from the contact's marker instead,
 // so traffic still shows on a node that has never had a position. Only while the map is
 // on screen and animations are on. Endpoints are kept as lat/lon and re-projected
 // every frame against the centre the markers were last drawn for, so a pan or zoom
 // mid-pulse keeps it on its line.
-enum MapPulseKind : uint8_t { MAP_PULSE_OUT, MAP_PULSE_IN, MAP_PULSE_ACK };
+enum MapPulseKind : uint8_t { MAP_PULSE_OUT, MAP_PULSE_IN, MAP_PULSE_ACK, MAP_PULSE_HEARD };
 #if CAP_MAP_PULSES
 struct MapPulse {
   lv_obj_t* obj;
+  lv_obj_t* trail;            // the lit stretch of line behind the dot (null for a ring)
   int32_t   lat_e6, lon_e6;   // the contact's end (unused for a ring)
   bool      ring;
   bool      at_contact;       // a ring around the contact (we have no position)
@@ -43289,7 +43293,17 @@ static bool     s_map_pulse_have_centre = false;
 
 static void mapPulseDeletedCb(lv_event_t* e) {
   lv_obj_t* o = lv_event_get_target(e);
-  for (auto& p : s_map_pulses) if (p.obj == o) p.obj = nullptr;
+  for (auto& p : s_map_pulses) {
+    if (p.obj != o) continue;
+    p.obj = nullptr;
+    if (p.trail) { lv_obj_del_async(p.trail); p.trail = nullptr; }
+  }
+}
+
+// The trail owns its two points (lv_line keeps the pointer), so a slot reused while the
+// old trail waits for its async delete never moves it.
+static void mapPulseTrailDeletedCb(lv_event_t* e) {
+  lv_mem_free(lv_obj_get_user_data(lv_event_get_target(e)));
 }
 
 static bool mapPulseScreenPt(double lat, double lon, int* sx, int* sy) {
@@ -43328,10 +43342,19 @@ static void mapPulseAnimCb(void* var, int32_t v) {   // v: 0..1000
   const int y = ssy + (int)(((int64_t)(csy - ssy) * t) / 1000);
   lv_obj_set_pos(o, x - k_map_pulse_dot / 2, y - k_map_pulse_dot / 2);
   lv_obj_set_style_bg_opa(o, (lv_opa_t)opa, LV_PART_MAIN);
+  if (p->trail) {
+    lv_point_t* pts = static_cast<lv_point_t*>(lv_obj_get_user_data(p->trail));
+    pts[0].x = (lv_coord_t)(p->inbound ? csx : ssx);
+    pts[0].y = (lv_coord_t)(p->inbound ? csy : ssy);
+    pts[1].x = (lv_coord_t)x;
+    pts[1].y = (lv_coord_t)y;
+    lv_line_set_points(p->trail, pts, 2);
+    lv_obj_set_style_line_opa(p->trail, (lv_opa_t)((opa * 200) / 255), LV_PART_MAIN);
+  }
 }
 
 static void mapPulseDoneCb(lv_anim_t* a) {
-  lv_obj_del_async(static_cast<lv_obj_t*>(a->var));
+  lv_obj_del_async(static_cast<lv_obj_t*>(a->var));   // its delete callback takes the trail
 }
 
 // pub: the other end, or nullptr for channel traffic (a ring around self).
@@ -43365,7 +43388,25 @@ static void mapPulse(const uint8_t* pub, MapPulseKind kind) {
     lv_obj_del(slot->obj);   // also stops its anim; the delete callback clears slot->obj
   }
 
-  const uint32_t col = kind == MAP_PULSE_OUT ? 0x4FC3F7 : (kind == MAP_PULSE_IN ? 0x81C784 : 0xFFD54F);
+  const uint32_t col = kind == MAP_PULSE_OUT ? 0x4FC3F7 : kind == MAP_PULSE_IN ? 0x81C784
+                     : kind == MAP_PULSE_ACK ? 0xFFD54F : 0xCE93D8;   // HEARD: lilac
+  lv_obj_t* trail = nullptr;
+  if (!np.ring) {
+    lv_point_t* pts = static_cast<lv_point_t*>(lv_mem_alloc(2 * sizeof(lv_point_t)));
+    if (pts) {
+      pts[0].x = pts[0].y = pts[1].x = pts[1].y = -100;
+      trail = lv_line_create(s_map_pan_layer);
+      lv_obj_set_user_data(trail, pts);
+      lv_obj_add_event_cb(trail, mapPulseTrailDeletedCb, LV_EVENT_DELETE, nullptr);
+      lv_obj_clear_flag(trail, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_add_flag(trail, LV_OBJ_FLAG_IGNORE_LAYOUT);
+      lv_line_set_points(trail, pts, 2);
+      lv_obj_set_style_line_width(trail, 3, LV_PART_MAIN);
+      lv_obj_set_style_line_color(trail, lv_color_hex(col), LV_PART_MAIN);
+      lv_obj_set_style_line_rounded(trail, true, LV_PART_MAIN);
+      lv_obj_move_foreground(trail);
+    }
+  }
   lv_obj_t* o = lv_obj_create(s_map_pan_layer);
   lv_obj_remove_style_all(o);
   lv_obj_clear_flag(o, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
@@ -43384,6 +43425,7 @@ static void mapPulse(const uint8_t* pub, MapPulseKind kind) {
   lv_obj_move_foreground(o);
 
   np.obj = o;
+  np.trail = trail;
   np.born = millis();
   *slot = np;
   lv_obj_set_user_data(o, slot);
@@ -43398,6 +43440,59 @@ static void mapPulse(const uint8_t* pub, MapPulseKind kind) {
   lv_anim_set_ready_cb(&a, mapPulseDoneCb);
   lv_anim_start(&a);
   mapPulseAnimCb(o, 0);
+}
+
+// Traffic we hear but did not send or receive ourselves (#827: "data passing between
+// nodes"). Reads the receptions logRxRaw recorded since the last call and pulses along the
+// line to the node our radio heard each one from, when that node is a contact with a
+// position: the last repeater of a flood, or the origin of an advert heard first-hand. A
+// direct frame does not say who sent it on, so it is left out. Paced: at most one per
+// k_heard_gap_ms and none for the same node within k_heard_same_ms, so a busy mesh keeps a
+// readable map and the pulses' repaints stay bounded.
+static void mapPulseFromRxLog(unsigned long now) {
+  static uint32_t s_seen = 0;
+  static unsigned long s_last_ms = 0;
+  static uint8_t s_last_key[4] = {0};
+  static unsigned long s_last_key_ms = 0;
+  constexpr unsigned long k_heard_gap_ms = 250, k_heard_same_ms = 1200, k_heard_max_age_ms = 2000;
+  const uint32_t seq = the_mesh.uiRxLogSeq();
+  if (seq == s_seen) return;
+  uint32_t fresh = seq - s_seen;
+  s_seen = seq;
+  if (s_ui_muted || !s_map_pan_layer || !s_map_pulse_have_centre || !s_map_show_contacts || !g_lv.task) return;
+  if (g_lv.task->isScreenOff() || getActiveTab() != MAP_TAB_INDEX) return;
+  if (g_lv.task->getNodeLat() == 0.0 && g_lv.task->getNodeLon() == 0.0) return;   // no line without us
+  if (now - s_last_ms < k_heard_gap_ms) return;
+  if (fresh > the_mesh.uiRxLogCount()) fresh = the_mesh.uiRxLogCount();
+  for (uint32_t i = 0; i < fresh; ++i) {   // newest first
+    MyMesh::UiRxRec r;
+    if (!the_mesh.uiRxLogGet((uint8_t)i, r)) break;
+    if ((uint32_t)(millis() - r.ms) > k_heard_max_age_ms) break;
+    const uint8_t* key = nullptr;
+    uint8_t key_sz = 0;
+    if (r.last_hop_sz) { key = r.last_hop; key_sz = r.last_hop_sz; }
+    else if (r.org_kind == 1 && r.hops == 0) { key = r.org; key_sz = 4; }   // an advert, first-hand
+    if (!key) continue;
+    if (memcmp(key, s_last_key, key_sz) == 0 && now - s_last_key_ms < k_heard_same_ms) continue;
+    // A one-byte hash can match several contacts: take the first with a position,
+    // preferring a repeater, since that is what relays.
+    ContactInfo best{};
+    bool have = false;
+    for (uint32_t c = 0; c < the_mesh.getNumContacts(); ++c) {
+      ContactInfo ci;
+      if (!the_mesh.getContactByIdx(c, ci)) continue;
+      if (ci.gps_lat == 0 && ci.gps_lon == 0) continue;
+      if (memcmp(ci.id.pub_key, key, key_sz) != 0) continue;
+      if (!have || (ci.type == ADV_TYPE_REPEATER && best.type != ADV_TYPE_REPEATER)) { best = ci; have = true; }
+      if (best.type == ADV_TYPE_REPEATER) break;
+    }
+    if (!have) continue;
+    mapPulse(best.id.pub_key, MAP_PULSE_HEARD);
+    memcpy(s_last_key, key, key_sz);
+    s_last_key_ms = now;
+    s_last_ms = now;
+    return;   // one per pass
+  }
 }
 #else
 static inline void mapPulse(const uint8_t*, MapPulseKind) {}
@@ -89856,6 +89951,9 @@ void UITask::loop() {
 #endif
 #if CAP_REMOTE_ACCESS
   webTelemetryTick(now);
+#endif
+#if CAP_MAP_PULSES
+  mapPulseFromRxLog(now);   // traffic we only hear, along the map's lines (#827)
 #endif
 
   /* User button (BOOT / PIN_USER_BTN): press toggles the screen. When the

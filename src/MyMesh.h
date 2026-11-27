@@ -790,6 +790,8 @@ public:
   UiRxRec  _ui_rxlog[UI_RXLOG_MAX];
   uint8_t  _ui_rxlog_head = 0;        // next write slot
   uint8_t  _ui_rxlog_cnt  = 0;        // valid entries (<= UI_RXLOG_MAX)
+  uint32_t _ui_rxlog_seq  = 0;        // receptions pushed since boot; readers keep the last one seen
+  uint32_t uiRxLogSeq() const { return _ui_rxlog_seq; }
   uint8_t  uiRxLogCount() const { return _ui_rxlog_cnt; }
   bool     uiRxLogGet(uint8_t i, UiRxRec& out) const {
     if (i >= _ui_rxlog_cnt) return false;
@@ -819,6 +821,7 @@ public:
     if (path_bytes) memcpy(r.path, path, path_bytes);
     _ui_rxlog_head = (uint8_t)((_ui_rxlog_head + 1) % UI_RXLOG_MAX);
     if (_ui_rxlog_cnt < UI_RXLOG_MAX) _ui_rxlog_cnt++;
+    ++_ui_rxlog_seq;
   }
 
   /** Fingerprint of the most-recently originated flood TXT payload (0 if none). */
