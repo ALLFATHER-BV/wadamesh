@@ -56,9 +56,14 @@ BUILD_DIR=build/tanmatsu
 VARIANT_ARGS=()
 # The standalone image compiles its own app in its own build directory: its 6 MB slot
 # fits remote access (WADA_TANMATSU_STANDALONE), which the AppFS app leaves out.
+# WADA_STANDALONE=1 points any other idf.py action (monitor above all, so backtraces
+# decode against the standalone ELF) at that build too.
 case "${1:-}" in
-  standalone|standalone-flash) BUILD_DIR=build/tanmatsu-standalone; VARIANT_ARGS=(-DWADA_TANMATSU_STANDALONE=1) ;;
+  standalone|standalone-flash) WADA_STANDALONE=1 ;;
 esac
+if [ "${WADA_STANDALONE:-0}" = 1 ]; then
+  BUILD_DIR=build/tanmatsu-standalone; VARIANT_ARGS=(-DWADA_TANMATSU_STANDALONE=1)
+fi
 IDF_ARGS=(-B "$BUILD_DIR" "${VARIANT_ARGS[@]}" \
   -DDEVICE=tanmatsu \
   -DSDKCONFIG_DEFAULTS="sdkconfigs/general;sdkconfigs/tanmatsu;sdkconfigs/wadamesh;sdkconfigs/wadamesh_tanmatsu" \

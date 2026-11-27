@@ -109,7 +109,7 @@ run_tanmatsu() {
       flash)
         "$TANMATSU_BUILD" standalone-flash ${port_args+"${port_args[@]}"} ${erase+"${erase[@]}"} || return 1
         [ -n "${PORT:-}" ] || PORT="$(cat "$ROOT/tanmatsu/build/tanmatsu-standalone/standalone/port" 2>/dev/null)" ;;
-      monitor)   "$TANMATSU_BUILD" ${PORT:+-p "$PORT"} monitor || return 1 ;;
+      monitor)   WADA_STANDALONE=1 "$TANMATSU_BUILD" ${PORT:+-p "$PORT"} monitor || return 1 ;;
     esac
   done
 }
