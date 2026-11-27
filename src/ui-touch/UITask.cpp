@@ -81550,31 +81550,54 @@ int UITask::findOrCreateThread(const char* name, bool channel) {
     if (_ui_threads[i].used && _ui_threads[i].channel == channel &&
         strncmp(_ui_threads[i].name, name, MAX_THREAD_NAME) == 0) return i;
   }
-  for (int i = 0; i < MAX_UI_THREADS; ++i) {
-    if (_ui_threads[i].used) continue;
-    _ui_threads[i].used              = true;
-    _ui_threads[i].channel           = channel;
-    _ui_threads[i].mesh_contact_idx  = -1;
-    memset(_ui_threads[i].mesh_contact_pub, 0, sizeof(_ui_threads[i].mesh_contact_pub));
-    memset(_ui_threads[i].mesh_contact_key6, 0, sizeof(_ui_threads[i].mesh_contact_key6));
-    _ui_threads[i].mesh_channel_slot = -1;
-    _ui_threads[i].unread            = 0;
-    _ui_threads[i].has_mention       = false;
-    _ui_threads[i].keep_when_empty   = false;
-    // The time of its newest message when the ring already holds some (a channel
-    // thread recreated at boot from the mesh's channel list): the inbox shows and
-    // sorts by this. millis() only as the old fallback for a brand-new thread; it
-    // is no date, so the inbox shows no time for it rather than a 1970 one.
-    {
-      const uint32_t nt = newestThreadMessageTs(name, channel);
-      _ui_threads[i].last_ts = nt ? nt : millis();
-    }
-    strncpy(_ui_threads[i].name, name, MAX_THREAD_NAME);
-    _ui_threads[i].name[MAX_THREAD_NAME] = '\0';
-    ++_reply_gen;   // a recreated thread may own ring messages already
-    return i;
+  int i = -1;
+  for (int k = 0; k < MAX_UI_THREADS && i < 0; ++k) {
+    if (!_ui_threads[k].used) i = k;
   }
-  return -1;
+  if (i < 0) i = reuseIdlestDmThread();
+  if (i < 0) return -1;
+  _ui_threads[i].used              = true;
+  _ui_threads[i].channel           = channel;
+  _ui_threads[i].mesh_contact_idx  = -1;
+  memset(_ui_threads[i].mesh_contact_pub, 0, sizeof(_ui_threads[i].mesh_contact_pub));
+  memset(_ui_threads[i].mesh_contact_key6, 0, sizeof(_ui_threads[i].mesh_contact_key6));
+  _ui_threads[i].mesh_channel_slot = -1;
+  _ui_threads[i].unread            = 0;
+  _ui_threads[i].has_mention       = false;
+  _ui_threads[i].keep_when_empty   = false;
+  // The time of its newest message when the ring already holds some (a channel
+  // thread recreated at boot from the mesh's channel list): the inbox shows and
+  // sorts by this. millis() only as the old fallback for a brand-new thread; it
+  // is no date, so the inbox shows no time for it rather than a 1970 one.
+  {
+    const uint32_t nt = newestThreadMessageTs(name, channel);
+    _ui_threads[i].last_ts = nt ? nt : millis();
+  }
+  strncpy(_ui_threads[i].name, name, MAX_THREAD_NAME);
+  _ui_threads[i].name[MAX_THREAD_NAME] = '\0';
+  ++_reply_gen;   // a recreated thread may own ring messages already
+  return i;
+}
+
+// The table is full (#921). Every channel holds a slot for good, so a device with
+// many channels has little room left for DMs, and opening a chat or taking a DM
+// from a new sender silently failed. Hand over the DM thread idle longest: not
+// the open one, nor one with unread messages or a mention. Its messages stay in
+// the ring and come back with the thread if that contact writes again.
+int UITask::reuseIdlestDmThread() {
+  int victim = -1;
+  for (int t = 0; t < MAX_UI_THREADS; ++t) {
+    const UIThread& th = _ui_threads[t];
+    if (!th.used || th.channel || t == _active_thread_idx || th.unread || th.has_mention) continue;
+    if (victim < 0 || th.last_ts < _ui_threads[victim].last_ts) victim = t;
+  }
+  if (victim < 0) return -1;
+  _ui_threads[victim] = UIThread{};
+  _ui_threads[victim].mesh_contact_idx  = -1;
+  _ui_threads[victim].mesh_channel_slot = -1;
+  _thread_hist_dirty = true;   // the per-slot message counts belonged to the old thread
+  markThreadsDirty(200);
+  return victim;
 }
 
 bool UITask::removeThread(int idx) {
@@ -84031,7 +84054,10 @@ void UITask::openMeshContactDm(uint32_t mesh_contact_index) {
   ContactInfo c;
   if (!the_mesh.getContactByIdx(mesh_contact_index, c) || !c.name[0]) return;
   int t = findOrCreateThread(c.name, false);
-  if (t < 0) return;
+  if (t < 0) {
+    showAlert(TR("Chat list full - delete a chat"), 2500);
+    return;
+  }
   _ui_threads[t].mesh_contact_idx = static_cast<int16_t>(mesh_contact_index);
   memcpy(_ui_threads[t].mesh_contact_pub, c.id.pub_key, sizeof(_ui_threads[t].mesh_contact_pub));
   memcpy(_ui_threads[t].mesh_contact_key6, c.id.pub_key, sizeof(_ui_threads[t].mesh_contact_key6));
