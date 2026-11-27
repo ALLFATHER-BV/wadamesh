@@ -34,8 +34,10 @@
 #include <cmath>
 #include <cerrno>   // chat-store write diagnostics surface errno (ENFILE vs ENOSPC vs EIO)
 #include <algorithm>
-#include <string>
+#if CAP_FIXED_NAVIGATION
+#include <string>   // FixedSettingsNavigation.h
 #include <vector>
+#endif
 #if CAP_LUA_AUDIO
 static void* wadaMp3Scratch();
 #define MINIMP3_ONLY_MP3
@@ -173,8 +175,10 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "ReactionCodec.h"       // host-tested emoji reactions from MeshCore Open / One (#791)
 #include "ReplyQuote.h"          // host-tested reply-quote rules (#641)
 #include "PasteHexKey.h"        // host-tested key extraction for pasted key fields (#526)
-#include "FixedDrawer.h"
-#include "FixedMenuRows.h"
+#if CAP_FIXED_NAVIGATION
+#include "FixedDrawer.h"        // host-tested app-drawer folders and pages (#924)
+#include "FixedMenuRows.h"      // host-tested row packing for paged menus (#924)
+#endif
 #include "NavSpatial.h"         // host-tested keypad spatial step (navMoveDir)
 #include "SdThreat.h"           // SD-card malware rules: the mount-time warning + wada.sd.remove
 #include "UsbFilesSession.h"    // USB Files: files.wadamesh.com over the USB cable
@@ -718,10 +722,25 @@ static constexpr TouchPalette kNightHighContrastPalette = {
   0xBFBFBF, 0x303030, 0x58FFF0,
 };
 
-static bool fixedNavigationEnabled();
-static lv_coord_t fixedThemeHeaderHeight();
+// Fixed navigation (#924): paged menus instead of scrolling ones, a per-device choice
+// in Settings > Theme on the boards with CAP_FIXED_NAVIGATION. Everywhere else the
+// mode is constant false and the hooks below are empty, so shared code that asks
+// "fixed ?" folds back to its scrolling form and the fixed-only code is not built.
 #if CAP_FIXED_NAVIGATION
-static bool s_fixed_navigation = false;
+static bool s_fixed_navigation = false;   // read once at boot (applyBootTheme)
+static bool fixedNavigationEnabled() { return s_fixed_navigation; }
+static lv_coord_t fixedThemeHeaderHeight();
+#else
+static constexpr bool fixedNavigationEnabled() { return false; }
+static inline bool fixedSettingsOutsidePage(lv_obj_t*) { return false; }
+static inline bool fixedSettingsDetailBack() { return false; }
+static inline const char* fixedSettingsDetailTitle() { return nullptr; }
+static inline void fixedSettingsRememberBlock(lv_obj_t*, lv_obj_t*, const char*) {}
+static inline void refitFixedFirmwareSettings() {}
+static inline void fixedActionPaginate(lv_obj_t*, uint32_t, uint32_t) {}
+static inline void fixedMenuProtectTap(lv_obj_t*) {}
+static inline void fixedActionCenterCaption(lv_obj_t*, lv_coord_t, lv_coord_t) {}
+static inline const lv_font_t* fixedActionFont() { return nullptr; }   // only on fixed-mode branches
 #endif
 static uint8_t s_theme_mode = TOUCH_THEME_NIGHT;
 // Keep the established light/dark role flag separate from contrast: many call
@@ -8421,7 +8440,9 @@ static void tanmatsuKeypadRead(lv_indev_drv_t* drv, lv_indev_data_t* data) {
 // step through scaffolding. Instead add only LEAF clickables — a clickable object
 // with no clickable descendant (buttons, list rows, switches, dropdowns…) — which
 // are the real tap targets. Returns true if the subtree contains any clickable.
-static bool fixedSettingsOutsidePage(lv_obj_t* control);
+#if CAP_FIXED_NAVIGATION
+static bool fixedSettingsOutsidePage(lv_obj_t* control);   // a control on another page of a paged menu
+#endif
 static bool navCollect(lv_obj_t* obj) {
   if (lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) return false;   // skip hidden subtrees
   // NAV_SKIP takes a whole passive subtree out of nav — skip it AND its children, not just the
@@ -9737,7 +9758,9 @@ static void deviceRefreshLabels() {
 }
 // s_settings_sheet / s_settings_open_cat / s_settings_from_cc are declared ABOVE the nav
 // functions (navMaybeRebuild needs them to collect the settings detail sheet for trackball nav).
-static bool      fixedSettingsDetailBack();
+#if CAP_FIXED_NAVIGATION
+static bool      fixedSettingsDetailBack();       // a paged settings page: back to its section index
+#endif
 static void      closeSettingsCategory();        // fwd: tab-change + key-dismiss close the sheet
 static void      openSettingsCategory(int cat);  // fwd: the Contacts overflow links to CAT_AUTOADD
 #if CAP_LUA_SDK_EXT
@@ -10059,7 +10082,9 @@ static lv_obj_t* s_ota_status_lbl = nullptr;   // live OTA status line (About pa
 static lv_obj_t* s_ota_btn        = nullptr;   // "Install update" button (greyed when up to date)
 static lv_obj_t* s_ota_btn_lbl    = nullptr;   // its caption (recoloured when disabled)
 static lv_obj_t* s_ota_prev_btn = nullptr;   // single "Install a previous version" button (opens the version-picker popup)
-static void refitFixedFirmwareSettings();
+#if CAP_FIXED_NAVIGATION
+static void refitFixedFirmwareSettings();   // the About page's status lines change its pages
+#endif
 
 // The OTA status line: shown only while it has something to say.
 static void otaStatusText(const char* t) {
@@ -10400,6 +10425,27 @@ static void otaPrevVersionsCb(lv_event_t* e) {
 // which has no OTA, lost it when it lived in there).
 static void popupClose(lv_obj_t** root);   // THE popup closer (defined below)
 static bool webSettingsRecording();
+static bool isUiIconGlyph(const char* g);         // with the launcher tiles
+
+#if CAP_FIXED_NAVIGATION
+// ---- Fixed navigation: paged menus (#924) ----------------------------------------
+// A pager's Previous / Next on its first or last page: greyed, and out of keypad
+// focus as well. A disabled button keeps LV_OBJ_FLAG_CLICKABLE, so navCollect would
+// still stop on it; NAV_SKIP_FLAG takes it out. Focus on a button that just went
+// out moves to the other one.
+static void fixedPagerButtons(lv_obj_t* previous, lv_obj_t* next, bool has_previous, bool has_next) {
+  auto set = [](lv_obj_t* b, bool on) {
+    if (on) { lv_obj_clear_state(b, LV_STATE_DISABLED); lv_obj_clear_flag(b, NAV_SKIP_FLAG); }
+    else    { lv_obj_add_state(b, LV_STATE_DISABLED);   lv_obj_add_flag(b, NAV_SKIP_FLAG); }
+  };
+#if CAP_KEYPAD_NAV
+  if (!has_previous && has_next && lv_obj_has_state(previous, LV_STATE_FOCUSED)) s_nav_focus_hint = next;
+  if (!has_next && has_previous && lv_obj_has_state(next, LV_STATE_FOCUSED)) s_nav_focus_hint = previous;
+#endif
+  set(previous, has_previous);
+  set(next, has_next);
+  navMarkDirty();
+}
 
 static void fixedMenuCheckDrag(lv_event_t*) {
   lv_indev_t* input = lv_indev_get_act();
@@ -10418,8 +10464,6 @@ static void fixedMenuProtectTap(lv_obj_t* control) {
   while (lv_obj_remove_event_cb(control, fixedMenuCheckDrag)) {}
   lv_obj_add_event_cb(control, fixedMenuCheckDrag, LV_EVENT_PRESSING, nullptr);
 }
-
-static bool isUiIconGlyph(const char* g);         // with the launcher tiles
 
 static const lv_font_t* fixedActionFont() {
   const lv_font_t* chrome = uiChromeFont();
@@ -10448,14 +10492,8 @@ static void fixedActionShowPage(lv_obj_t* footer, int index) {
     else lv_obj_add_flag(page, LV_OBJ_FLAG_HIDDEN);
   }
   lv_obj_set_user_data(pages, (void*)(intptr_t)index);
-  lv_obj_t* previous = lv_obj_get_child(footer, 0);
-  lv_obj_t* next = lv_obj_get_child(footer, 2);
-  if (index == 0) lv_obj_add_state(previous, LV_STATE_DISABLED);
-  else lv_obj_clear_state(previous, LV_STATE_DISABLED);
-  if (index + 1 == count) lv_obj_add_state(next, LV_STATE_DISABLED);
-  else lv_obj_clear_state(next, LV_STATE_DISABLED);
   lv_label_set_text_fmt(lv_obj_get_child(footer, 1), "%d/%d", index + 1, count);
-  navMarkDirty();
+  fixedPagerButtons(lv_obj_get_child(footer, 0), lv_obj_get_child(footer, 2), index > 0, index + 1 < count);
 }
 
 static void fixedActionPageCb(lv_event_t* event) {
@@ -10570,6 +10608,7 @@ static void fixedActionPaginate(lv_obj_t* body, uint32_t first, uint32_t end) {
   button(TR("Next"), LV_ALIGN_RIGHT_MID, 1);
   fixedActionShowPage(footer, 0);
 }
+#endif  // CAP_FIXED_NAVIGATION
 
 // ---- Action list (the redesign's menu sheet) -----------------------------------
 // A card of rows (icon + label), destructive ones last and in red, over a dimmed
@@ -10584,6 +10623,9 @@ struct ActItem {
 static lv_obj_t* s_actlist_root = nullptr;
 static ActItem   s_actlist_items[16];
 static int       s_actlist_n = 0;
+#if CAP_FIXED_NAVIGATION
+// Fixed navigation opens a choice tile's options in this sheet. The tile is the
+// sheet's receiver: it gets the picked index as LV_EVENT_VALUE_CHANGED.
 static bool      s_choice_dispatch = false;   // tags a dialog opened by a choice callback
 
 static lv_obj_t* actListReceiver() {
@@ -10592,9 +10634,14 @@ static lv_obj_t* actListReceiver() {
 static void actListReceiverGone(lv_event_t* e) {
   if (actListReceiver() == lv_event_get_target(e)) popupClose(&s_actlist_root);
 }
+#else
+static inline lv_obj_t* actListReceiver() { return nullptr; }
+#endif
 static void actListClose() {
+#if CAP_FIXED_NAVIGATION
   if (auto* receiver = actListReceiver()) lv_obj_remove_event_cb(receiver, actListReceiverGone);
-  popupClose(&s_actlist_root);
+#endif
+  if (s_actlist_root) popupClose(&s_actlist_root);
 }
 static void actListBackdropCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -10611,11 +10658,13 @@ static void actListRowCb(lv_event_t* e) {
   if (lv_indev_t* in = lv_indev_get_act()) lv_indev_wait_release(in);
   actListClose();
   if (fn) fn();
+#if CAP_FIXED_NAVIGATION
   else if (receiver && lv_obj_is_valid(receiver)) {
     s_choice_dispatch = true;
     lv_event_send(receiver, LV_EVENT_VALUE_CHANGED, &i);
     s_choice_dispatch = false;
   }
+#endif
 }
 static void actListCloseCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -10637,8 +10686,13 @@ static lv_obj_t* actListMakeClose(lv_obj_t* parent, lv_coord_t size) {
   return x;
 }
 
+#if CAP_FIXED_NAVIGATION
 // A choice control receives the selected index. Standalone actions run their callback.
 static void openActionList(const char* title, const ActItem* items, int n, lv_obj_t* receiver = nullptr) {
+#else
+static void openActionList(const char* title, const ActItem* items, int n) {
+  lv_obj_t* const receiver = nullptr;
+#endif
   actListClose();
   if (!receiver) {
     n = std::min(n, (int)(sizeof s_actlist_items / sizeof s_actlist_items[0]));
@@ -10650,8 +10704,10 @@ static void openActionList(const char* title, const ActItem* items, int n, lv_ob
   const lv_coord_t top = fixed ? statusBarCurH() : STATUSBAR_H;
 
   s_actlist_root = lv_obj_create(lv_layer_top());
+#if CAP_FIXED_NAVIGATION
   lv_obj_set_user_data(s_actlist_root, receiver);
   if (receiver) lv_obj_add_event_cb(receiver, actListReceiverGone, LV_EVENT_DELETE, nullptr);
+#endif
   lv_obj_remove_style_all(s_actlist_root);
   lv_obj_set_size(s_actlist_root, sw, fixed ? sh - top : sh);
   if (fixed) lv_obj_set_y(s_actlist_root, top);
@@ -16166,8 +16222,10 @@ static lv_coord_t s_settings_content_w = 280;
 // pages that add cards later (the Wi-Fi lists) or hide a group of them together (the
 // Bluetooth keyboard) build into a column of their own. Returns the panel's content and
 // sets s_settings_content_w to its width, which the settings kit's rows size to.
-static char s_settings_card_heading_tag;
+#if CAP_FIXED_NAVIGATION
+static char s_settings_card_heading_tag;   // marks a card's heading label for the fixed pager
 static void fixedSettingsRememberBlock(lv_obj_t* parent, lv_obj_t* block, const char* title);
+#endif
 static lv_obj_t* settingsCardIn(lv_obj_t* parent, const char* title) {
   // Grouped-card section: a muted group header above a rounded panel card with
   // internal padding. The card fills the page content width (symmetric 8 px
@@ -16193,7 +16251,9 @@ static lv_obj_t* settingsCardIn(lv_obj_t* parent, const char* title) {
   lv_obj_clear_flag(wrap, LV_OBJ_FLAG_SCROLLABLE);
   if (title && title[0]) {
     lv_obj_t* h = lv_label_create(wrap);
+#if CAP_FIXED_NAVIGATION
     lv_obj_set_user_data(h, &s_settings_card_heading_tag);
+#endif
     styleSectionLabel(h, title);
     lv_obj_set_style_pad_left(h, 6, LV_PART_MAIN);
     lv_obj_set_style_pad_bottom(h, 6, LV_PART_MAIN);
@@ -17525,7 +17585,11 @@ static inline lv_obj_t* setCardOuter(lv_obj_t* content) { return lv_obj_get_pare
 // hidden together. Cards built into it get the same width as the page's own.
 static lv_obj_t* setColumn(const char* title) {
   lv_obj_t* col = lv_obj_create(s_settings_inline_parent);
-  fixedSettingsRememberBlock(s_settings_inline_parent, col, TR(title));
+#if CAP_FIXED_NAVIGATION
+  fixedSettingsRememberBlock(s_settings_inline_parent, col, TR(title));   // its section tile in fixed mode
+#else
+  (void)title;
+#endif
   lv_obj_remove_style_all(col);
   lv_obj_set_size(col, lv_disp_get_hor_res(nullptr) - 22, LV_SIZE_CONTENT);   // the card width (settingsCardIn)
   lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
@@ -17549,9 +17613,11 @@ static lv_obj_t* setFixedGroup(lv_obj_t* card) {
   return group;
 }
 
+#if CAP_FIXED_NAVIGATION
 static void fixedSettingsHelpClick(lv_event_t* e) {
   showConfirm(static_cast<const char*>(lv_event_get_user_data(e)), nullptr, nullptr);
 }
+#endif
 
 // A row's name and help line, from (2, y0) in a row box, wrapped to tw. Returns the height.
 static lv_coord_t setRowText(lv_obj_t* row, const char* title, const char* help, lv_coord_t tw, lv_coord_t y0) {
@@ -17578,15 +17644,18 @@ static lv_coord_t setRowText(lv_obj_t* row, const char* title, const char* help,
     lv_label_set_long_mode(h, LV_LABEL_LONG_WRAP);
     lv_point_t sz;
     lv_txt_get_size(&sz, ht, &g_font_12, 0, 0, tw, LV_TEXT_FLAG_NONE);
-    char* detail = nullptr;
+    char* detail = nullptr;   // fixed pages: a long help line becomes "Read more", opening it
+#if CAP_FIXED_NAVIGATION
     if (compact && sz.y > 2 * lv_font_get_line_height(&g_font_12)) {
       detail = static_cast<char*>(lv_mem_alloc(strlen(ht) + 1));
       if (detail) strcpy(detail, ht);
     }
+#endif
     lv_label_set_text(h, detail ? TR("Read more") : ht);
     lv_obj_set_style_text_font(h, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(h, lv_color_hex(detail ? COLOR_ACCENT : COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_pos(h, 2, y + 2);
+#if CAP_FIXED_NAVIGATION
     if (detail) {
       sz.y = lv_font_get_line_height(&g_font_12);
       lv_obj_add_flag(h, LV_OBJ_FLAG_CLICKABLE);
@@ -17596,6 +17665,7 @@ static lv_coord_t setRowText(lv_obj_t* row, const char* title, const char* help,
       lv_obj_add_event_cb(h, [](lv_event_t* e) { lv_mem_free(lv_event_get_user_data(e)); },
                           LV_EVENT_DELETE, detail);
     }
+#endif
     y += 2 + sz.y;
   }
   return y - y0;
@@ -17651,13 +17721,19 @@ static void setTileStyle(lv_obj_t* b, bool on, bool enabled) {
   lv_obj_set_style_opa(b, enabled ? LV_OPA_COVER : LV_OPA_40, LV_PART_MAIN);
 }
 
+static void setActionValue(lv_obj_t* row, const char* value);
+#if CAP_FIXED_NAVIGATION
+// Fixed navigation shows a choice row as one tile (its face) that opens the options
+// as a menu; the row of option buttons stays, hidden inside the tile.
 static void fixedChoiceSelect(lv_event_t* e);
 static void fixedChoiceAttach(lv_obj_t* row, const char* title, const char* help, lv_coord_t width);
-static void setActionValue(lv_obj_t* row, const char* value);
 static lv_obj_t* fixedChoiceFace(lv_obj_t* row) {
   lv_obj_t* parent = lv_obj_get_parent(row);
   return parent && lv_obj_get_event_user_data(parent, fixedChoiceSelect) == row ? parent : nullptr;
 }
+#else
+static inline lv_obj_t* fixedChoiceFace(lv_obj_t*) { return nullptr; }
+#endif
 
 static void setChoicePick(lv_obj_t* row, int picked, bool enabled = true) {
   if (!row) return;
@@ -17722,7 +17798,9 @@ static lv_obj_t* setChoiceRow(lv_obj_t* card, const char* title, const char* hel
       lv_obj_center(l);
     }
   }
+#if CAP_FIXED_NAVIGATION
   if (fixed) fixedChoiceAttach(row, title, help, w);
+#endif
   setChoicePick(row, picked);
   wcRec(WCK_CHOICE, row, nullptr, wcTR(title), wcTR(help));
   return row;
@@ -17834,6 +17912,7 @@ static void setActionValue(lv_obj_t* row, const char* value) {
   else                   lv_obj_add_flag(l, LV_OBJ_FLAG_HIDDEN);
 }
 
+#if CAP_FIXED_NAVIGATION
 // Options and help are copied into LVGL labels by their builders. Menu callbacks
 // can therefore outlive the stack arrays and translated strings passed to them.
 static void fixedChoiceOpen(lv_event_t* e) {
@@ -17930,6 +18009,7 @@ static void fixedChoiceAttach(lv_obj_t* row, const char* title, const char* help
   lv_obj_add_event_cb(tile, fixedChoiceOpen, LV_EVENT_CLICKED, detail);
   lv_obj_add_event_cb(tile, fixedChoiceSelect, LV_EVENT_VALUE_CHANGED, row);
 }
+#endif  // CAP_FIXED_NAVIGATION
 
 // A plain full-width button with a centred label: the page's main action (SET_PRIMARY),
 // a secondary one, or a destructive one (SET_DANGER, red on the plain face).
@@ -18289,21 +18369,12 @@ static void locTelemetryPickCb(lv_event_t* e) {
                                                   : TR("Location sharing off");
   g_lv.task->showAlert(msg, 1600);
 }
-// How many bytes of each repeater's hash this node stamps into a path.
-static constexpr const char* kPathHashSizes[] = {"1 byte", "2 bytes", "3 bytes"};
-static const char* pathHashHelp() {
-  return TR("More bytes tell repeaters apart in a big mesh. Repeaters older than MeshCore 1.14 drop 2 and 3 byte packets.");
-}
-
-static int pathHashMode(const NodePrefs* prefs) {
-  return prefs && prefs->path_hash_mode <= 2 ? prefs->path_hash_mode : 0;
-}
-
+// How many bytes of each repeater's hash this node stamps into a path, as tiles.
 static void pathHashPickCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
   const int i = setChoiceIndex(e);
   if (i < 0 || i > 2) return;
-  g_lv.task->setPathHashMode((uint8_t)i);
+  g_lv.task->setPathHashMode((uint8_t)i);   // clamps to 0..2 and saves
   setChoicePick(lv_obj_get_parent(lv_event_get_current_target(e)), i);
   char m[40];
   snprintf(m, sizeof m, TR("Path hash: %u byte%s"), (unsigned)(i + 1), i ? "s" : "");
@@ -18823,16 +18894,18 @@ static void buildRadioSettings() {
     lv_obj_t* c = setCard("Routing");
     // 1 byte (legacy) collides in large regions; 2-3 tell repeaters apart. Repeaters
     // before MeshCore 1.14 silently drop 2- and 3-byte packets.
-    const int phm = pathHashMode(prefs);
-    const bool fixed = compactFixedSettings();
+    uint8_t phm = prefs ? prefs->path_hash_mode : 0;
+    if (phm > 2) phm = 0;
+    const bool fixed = compactFixedSettings();   // fixed pages: shorter names, tighter rows
     if (fixed) lv_obj_set_style_pad_row(c, 6, LV_PART_MAIN);
-    const char* sizes[] = {TR(kPathHashSizes[0]), TR(kPathHashSizes[1]), TR(kPathHashSizes[2])};
+    const char* sizes[] = { TR("1 byte"), TR("2 bytes"), TR("3 bytes") };
 #if defined(HAS_TDECK_PRO)
-    const bool stack_sizes = true;
+    const bool stack_sizes = true;    // the 240 px panel: one full-width button per line
 #else
     const bool stack_sizes = false;
 #endif
-    setChoiceRow(c, fixed ? "Multi-byte" : "Multi-byte routing (path hash)", pathHashHelp(),
+    setChoiceRow(c, fixed ? "Multi-byte" : "Multi-byte routing (path hash)",
+                 "More bytes tell repeaters apart in a big mesh. Repeaters older than MeshCore 1.14 drop 2 and 3 byte packets.",
                  sizes, 3, phm, pathHashPickCb, stack_sizes);
     // The node-wide region floods are tagged with (#tag key = SHA256 of the name; blank
     // is unscoped, the default). Each channel can override it in its own settings.
@@ -18847,7 +18920,11 @@ static void buildRadioSettings() {
     setNote(scope, fixed ? "Blank = unscoped. Channels can override it."
                          : "Channel-specific regions can be set in each channel's settings.");
     lv_obj_t* regions = setActionRow(c, UI_ICON_HASH, "Known regions", nullptr, knownRegionsOpenCb);
+#if CAP_FIXED_NAVIGATION
     if (fixed) compactActionLabels(regions, 1);
+#else
+    (void)regions;
+#endif
     // Opt-in (#64): scope direct messages, logins and remote admin too, not just channels.
     setSwitchRow(c, fixed ? "Scope DMs to region" : "Scope direct msgs to region",
                  "Turn on only if your repeater re-floods just one region. Otherwise it can block logins and direct messages across regions.",
@@ -22397,13 +22474,16 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
                         bool actions_only_nav, bool focus_confirm) {
   confirmDismiss();
   s_confirm_cb = on_confirm;
-  const bool info_only = !on_confirm && !ok_label;
+  // Fixed navigation's help text and option details: a message with only a Close button.
+  const bool info_only = fixedNavigationEnabled() && !on_confirm && !ok_label;
   s_confirm_owner = s_confirm_owner_next;
   s_confirm_owner_next = false;
 
   // Backdrop: semi-opaque full-screen catcher so taps outside the card do nothing.
   s_confirm_modal = lv_obj_create(lv_layer_top());
+#if CAP_FIXED_NAVIGATION
   if (s_choice_dispatch) lv_obj_set_user_data(s_confirm_modal, &s_choice_dispatch);
+#endif
   lv_obj_remove_style_all(s_confirm_modal);
   // Backdrop starts below the global status bar — full screen so the card
   // centers on-screen and the tap-catcher covers everything. (When this was a
@@ -37239,7 +37319,9 @@ static void statusBarUnreadCb(lv_event_t* e) {
 // A toggle-in alternative to the command-centre home. The full implementation
 // lives below openControlCenter (it links to the tool openers defined there);
 // the home's Apps button and the back-key handler reach it through these.
-static fixed_drawer::Page s_drawer_page;
+#if CAP_FIXED_NAVIGATION
+static fixed_drawer::Page s_drawer_page;   // fixed navigation: the drawer's open folder and page
+#endif
 static lv_obj_t* s_appdrawer_root = nullptr;
 #if CAP_KEYPAD_NAV
 static lv_obj_t* appDrawerRoot() { return s_appdrawer_root; }   // for navOnMainPage, far above
@@ -44228,7 +44310,11 @@ static void mapOptInfoCb(lv_event_t* e) {
   lv_label_set_text(lbl, credits);
 }
 
+// All the options on one card, or (fixed navigation) one of its two groups.
 static void openMapOptionControls(MapOptionsView view) {
+#if !CAP_FIXED_NAVIGATION
+  view = MapOptionsView::All;   // the grouped views are fixed navigation's
+#endif
   closeMapOptions();
   const bool fixed = view != MapOptionsView::All;
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -44405,13 +44491,15 @@ static void openMapOptionControls(MapOptionsView view) {
   // it are cleanly hidden instead of bleeding through the bare glyph.
   const uint32_t end_action = lv_obj_get_child_cnt(card);
   lv_event_cb_t close_cb = mapOptionsDismissCb;
-  if (view != MapOptionsView::All) {
+#if CAP_FIXED_NAVIGATION
+  if (view != MapOptionsView::All) {   // a group's back arrow: to the group menu
     close_cb = [](lv_event_t* e) {
       if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
       closeMapOptions();
       openMapOptions();
     };
   }
+#endif
   lv_obj_t* xb = addCloseXBadge(card, close_cb);
   if (fixed) {
     lv_label_set_text(lv_obj_get_child(xb, 0), LV_SYMBOL_LEFT);
@@ -44425,16 +44513,20 @@ static void openMapOptionControls(MapOptionsView view) {
   fixedActionPaginate(card, first_action, end_action);
 }
 
+// Open the options popup: a compact card with the tile switches, the on-map
+// visibility switches and the Reload + Info rows.
 static void openMapOptions() {
-  if (fixedNavigationEnabled()) {
+#if CAP_FIXED_NAVIGATION
+  if (fixedNavigationEnabled()) {   // two short groups instead of one long card
     const ActItem groups[] = {
       { LV_SYMBOL_SETTINGS, TR("Tiles and display"), []{ openMapOptionControls(MapOptionsView::Tiles); }, false },
       { LV_SYMBOL_EYE_OPEN, TR("Show on map"), []{ openMapOptionControls(MapOptionsView::Visibility); }, false },
     };
     openActionList(TR("Map options"), groups, sizeof groups / sizeof groups[0]);
-  } else {
-    openMapOptionControls(MapOptionsView::All);
+    return;
   }
+#endif
+  openMapOptionControls(MapOptionsView::All);
 }
 
 static void mapOpenOptionsCb(lv_event_t* e) {
@@ -47384,7 +47476,9 @@ static void buildAboutSettings() {
   versionCheckUpdateUi();
 }
 
-#include "FixedSettingsNavigation.h"
+#if CAP_FIXED_NAVIGATION
+#include "FixedSettingsNavigation.h"   // paged settings pages, section tiles, the landing grid
+#endif
 
 static void settingsCatBuild(int cat) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
@@ -47484,7 +47578,9 @@ static void settingsCategoryDrop() {
   // momentum). A synchronous delete frees the scroll_obj while LVGL is still
   // walking the touch event chain -> use-after-free in indev_proc_release on the
   // following release/scroll-throw. Deferring frees it after the event finishes.
+#if CAP_FIXED_NAVIGATION
   fixedSettingsDetailClear();
+#endif
   s_settings_page = nullptr;
   if (s_settings_sheet) { popupClose(&s_settings_sheet); }
   s_settings_open_cat = -1;
@@ -47514,11 +47610,13 @@ static void closeSettingsCategory() {
 static void settingsPageRefit() {
   lv_obj_t* page = s_settings_page;
   if (!page || !lv_obj_is_valid(page)) return;
+#if CAP_FIXED_NAVIGATION
   if (s_fixed_settings_building) return;
-  if (s_fixed_detail_pager.view == page) {
+  if (s_fixed_detail_pager.view == page) {   // a paged page: repaginate instead
     fixedSettingsDetailRefit();
     return;
   }
+#endif
   const int nch = lv_obj_get_child_cnt(page);
   if (nch < 1) return;
   lv_obj_t* wrap = lv_obj_get_child(page, nch - 1);
@@ -47541,9 +47639,11 @@ static void settingsPageRefit() {
   }
 }
 
+#if CAP_FIXED_NAVIGATION
 static void refitFixedFirmwareSettings() {
   if (s_fixed_detail_pager.view) settingsPageRefit();
 }
+#endif
 
 // Open a category as a detail sheet (on layer_top, below the status bar). The
 // status bar itself carries the Back chevron + the page title (tapping the bar =
@@ -47595,27 +47695,34 @@ static void openSettingsCategory(int cat) {
   lv_obj_set_pos(page, 0, 0);
   lv_obj_set_size(page, sw, sh - settings_top);
   prepSettingsPage(page);
-  #if CAP_FIXED_NAVIGATION
+#if CAP_FIXED_NAVIGATION
+  // Fixed navigation: the Theme page's Apply bar sits above the page, not over it.
   const lv_coord_t theme_header = cat == CAT_THEME && fixedNavigationEnabled() ? fixedThemeHeaderHeight() : 0;
-#else
-  const lv_coord_t theme_header = 0;
-#endif
   lv_obj_set_style_pad_top(page, settings_pad_top + theme_header, LV_PART_MAIN);
+#else
+  lv_obj_set_style_pad_top(page, settings_pad_top, LV_PART_MAIN);
+#endif
 
   resetSettingsModalState();
   s_settings_page = page;
   s_settings_inline_parent = page;
+#if CAP_FIXED_NAVIGATION
   s_fixed_settings_building = fixedNavigationEnabled();
+#endif
   settingsCatBuild(cat);
   s_settings_inline_parent = nullptr;
+#if CAP_FIXED_NAVIGATION
   s_fixed_settings_building = false;
   if (theme_header > 0) {
     lv_obj_set_y(page, theme_header);
     lv_obj_set_height(page, sh - settings_top - theme_header);
     lv_obj_set_style_pad_top(page, settings_pad_top, LV_PART_MAIN);
   }
-  if (fixedNavigationEnabled()) fixedSettingsDetailInit(page);
+  if (fixedNavigationEnabled()) fixedSettingsDetailInit(page);   // split into pages and section tiles
   else settingsPageRefit();
+#else
+  settingsPageRefit();
+#endif
 
   // No floating X over the page (it reserved an ugly black band at the top and
   // overlapped the scrollbar). The close affordance lives in the status bar's left
@@ -47706,17 +47813,9 @@ static bool settingsCatOnBoard(int c) {
   return true;
 }
 
-// The status shared by the settings list and tiles. Group tiles give the value
-// some context because the group title does not name the individual setting.
-static bool settingsCatValue(int c, char* out, size_t cap, bool group = false) {
+// The state a row shows, or "" for none.
+static void settingsCatValue(int c, char* out, size_t cap) {
   out[0] = '\0';
-  const bool fixed = fixedNavigationEnabled();
-  if (group && c == CAT_PROFILE) c = CAT_RADIO;
-  if (group && c == CAT_DISPLAY) c = CAT_THEME;
-#if !CAP_WIFI_SETUP && !CAP_BT_SETUP && CAP_GPS
-  if (group && c == CAT_WIFI) c = CAT_GPS;  // browser: location comes from the host
-#endif
-  const char* status = nullptr;
   switch (c) {
     case CAT_DEVICE:
       deviceSummary(out, cap);
@@ -47729,13 +47828,66 @@ static bool settingsCatValue(int c, char* out, size_t cap, bool group = false) {
       break;
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
     case CAT_WIFI:
-      if (!fixed) {
-        if (!wifiConfigWantsWifi()) status = TR("Off");
-        else if (WiFi.status() == WL_CONNECTED) snprintf(out, cap, "%s", WiFi.SSID().c_str());
-        else status = TR("On");
-        break;
-      }
-#if CAP_WIFI_SETUP
+      if (!wifiConfigWantsWifi())               snprintf(out, cap, "%s", TR("Off"));
+      else if (WiFi.status() == WL_CONNECTED)   snprintf(out, cap, "%s", WiFi.SSID().c_str());
+      else                                      snprintf(out, cap, "%s", TR("On"));
+      break;
+#endif
+    case CAT_BLUETOOTH:
+#if CAP_BT_SETUP
+      snprintf(out, cap, "%s", bleRequestedOrEnabled() ? TR("On") : TR("Off"));
+#endif
+      break;
+#if !defined(HAS_TDECK_PRO)
+    case CAT_THEME:   // the mode, and the colour look when there is one
+      if (s_theme_high_contrast)  snprintf(out, cap, "%s", TR("High contrast"));
+      else if (s_look_rainbow)    snprintf(out, cap, "%s", TR("Rainbow"));
+      else if (s_look_more)       snprintf(out, cap, "%s", s_look_style == TOUCH_LOOK_NEON ? TR("Neon")
+                                                         : s_look_style == TOUCH_LOOK_PASTEL ? TR("Pastel") : TR("Regular"));
+      else                        snprintf(out, cap, "%s", s_theme_day ? TR("Day") : TR("Night"));
+      break;
+#endif
+    case CAT_LANGUAGE: {
+      const uint8_t l = i18nGetLang();
+      if (s_langfile_name[0])  snprintf(out, cap, "%s", s_langfile_name);   // a language file is active
+      else if (l < LANG_COUNT) snprintf(out, cap, "%s", kUiLangNames[l]);
+      break;
+    }
+#if CAP_BATTERY
+    case CAT_BATTERY: {
+      const uint16_t mv = batteryMvSmoothed();
+      if (mv) snprintf(out, cap, "%d%%", batteryPercentFromMv(mv));
+      break;
+    }
+#endif
+    default: break;
+  }
+}
+
+#if CAP_FIXED_NAVIGATION
+// Fixed navigation's settings tiles: the state under a tile's name, or false for a
+// tile without one. A group tile (group) shows the state of its first page, with
+// enough context to say which setting that is, as the group title does not.
+static bool fixedSettingsCatValue(int c, char* out, size_t cap, bool group) {
+  out[0] = '\0';
+  if (group && c == CAT_PROFILE) c = CAT_RADIO;
+  if (group && c == CAT_DISPLAY) c = CAT_THEME;
+#if !CAP_WIFI_SETUP && !CAP_BT_SETUP && CAP_GPS
+  if (group && c == CAT_WIFI) c = CAT_GPS;  // browser: location comes from the host
+#endif
+  const char* status = nullptr;
+  switch (c) {
+    case CAT_DEVICE:
+    case CAT_PROFILE:
+    case CAT_RADIO:
+    case CAT_LANGUAGE:
+#if CAP_BATTERY
+    case CAT_BATTERY:
+#endif
+      settingsCatValue(c, out, cap);   // the same state as the scrolling list's row
+      return true;
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_WIFI_SETUP
+    case CAT_WIFI:
       if (WiFi.status() == WL_CONNECTED) {
         const String ssid = WiFi.SSID();
         snprintf(out, cap, "%s%s", group ? "Wi-Fi · " : "", ssid.length() ? ssid.c_str() : TR("Connected"));
@@ -47744,16 +47896,9 @@ static bool settingsCatValue(int c, char* out, size_t cap, bool group = false) {
       } else if (group && g_lv.task && g_lv.task->isBleEnabled()) status = TR("Bluetooth on");
       else status = group ? TR("Wi-Fi off") : TR("Off");
       break;
-#else
-      return false;
-#endif
 #endif
 #if CAP_BT_SETUP
     case CAT_BLUETOOTH: {
-      if (!fixed) {
-        status = bleRequestedOrEnabled() ? TR("On") : TR("Off");
-        break;
-      }
       if (!g_lv.task || !g_lv.task->hasBleCapability()) return false;
       if (!g_lv.task->isBleEnabled()) {
         status = bleRequestedOrEnabled() ? TR("Starting…") : TR("Off");
@@ -47773,7 +47918,7 @@ static bool settingsCatValue(int c, char* out, size_t cap, bool group = false) {
 #endif
 #if CAP_GPS
     case CAT_GPS: {
-      if (!fixed || !g_lv.task) return false;
+      if (!g_lv.task) return false;
       if (!g_lv.task->getGPSState()) status = group ? TR("GPS off") : TR("Off");
       else if (!s_gps_hw_on && s_gps_wake_at) status = TR("Resting");
       else if (!g_lv.task->getGpsFix()) status = group ? TR("GPS: searching") : TR("Searching…");
@@ -47790,7 +47935,7 @@ static bool settingsCatValue(int c, char* out, size_t cap, bool group = false) {
       status = CAP_SD ? TR("Storage") : TR("Backups");
       break;
     case CAT_DISPLAY: {
-      if (!fixed || !g_lv.task) return false;
+      if (!g_lv.task) return false;
       char value[20];
       screenTimeoutFormat(touchPrefsScreenTimeoutIndex(g_lv.task->getScreenTimeoutSecs()), value, sizeof value);
       snprintf(out, cap, "%s · %s", value, TR("Screen timeout"));
@@ -47798,41 +47943,26 @@ static bool settingsCatValue(int c, char* out, size_t cap, bool group = false) {
     }
 #if defined(ESP32)
     case CAT_CLOCK:
-      if (!fixed) return false;
       snprintf(out, cap, "%u h · %s", touchPrefsGetClock12h() ? 12u : 24u,
                touchPrefsTimezoneLabel(touchPrefsGetTimezone()));
       break;
 #endif
 #if defined(HAS_UI_SOUND) || defined(HAS_TANMATSU)
     case CAT_SOUND:
-      if (!fixed || !g_lv.task) return false;
+      if (!g_lv.task) return false;
       status = g_lv.task->isBuzzerQuiet() ? TR("Off") : TR("On");
       break;
 #endif
 #if !defined(HAS_TDECK_PRO)
-    case CAT_THEME: {
+    case CAT_THEME: {   // the mode, and the colour look when there is one
       const char* mode = s_theme_day ? TR("Day") : TR("Night");
       const char* look = nullptr;
       if (s_theme_high_contrast) look = TR("High contrast");
       else if (s_look_rainbow)   look = TR("Rainbow");
       else if (s_look_more)      look = s_look_style == TOUCH_LOOK_NEON ? TR("Neon")
                                        : s_look_style == TOUCH_LOOK_PASTEL ? TR("Pastel") : TR("Regular");
-      if (group) status = mode;
-      else if (fixed && look) snprintf(out, cap, "%s · %s", mode, look);
-      else status = look ? look : mode;
-      break;
-    }
-#endif
-    case CAT_LANGUAGE: {
-      const uint8_t l = i18nGetLang();
-      if (s_langfile_name[0])  snprintf(out, cap, "%s", s_langfile_name);   // a language file is active
-      else if (l < LANG_COUNT) snprintf(out, cap, "%s", kUiLangNames[l]);
-      break;
-    }
-#if CAP_BATTERY
-    case CAT_BATTERY: {
-      const uint16_t mv = batteryMvSmoothed();
-      if (mv) snprintf(out, cap, "%d%%", batteryPercentFromMv(mv));
+      if (group || !look) status = mode;
+      else snprintf(out, cap, "%s · %s", mode, look);
       break;
     }
 #endif
@@ -47841,21 +47971,29 @@ static bool settingsCatValue(int c, char* out, size_t cap, bool group = false) {
   if (status) snprintf(out, cap, "%s", status);
   return true;
 }
+#endif  // CAP_FIXED_NAVIGATION
 
+// The update-available dot on the Device row (or tile).
 static void attachSettingsUpdateBadge(lv_obj_t* row, lv_align_t alignment, lv_coord_t x, lv_coord_t y) {
   s_update_subtab_badge = lv_obj_create(row);
   lv_obj_remove_style_all(s_update_subtab_badge);
-  // A decorative child must not take over the button's keypad focus.
+  // Pure decoration: a bare lv_obj is CLICKABLE by default, and keypad-nav's
+  // leaf rule then harvests the dot INSTEAD of the Device button it sits on
+  // (the button became "a container with a clickable child"), making Device
+  // unreachable by keyboard whenever the update badge shows.
   lv_obj_clear_flag(s_update_subtab_badge, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_size(s_update_subtab_badge, 8, 8);
   lv_obj_set_style_radius(s_update_subtab_badge, LV_RADIUS_CIRCLE, LV_PART_MAIN);
   lv_obj_set_style_bg_color(s_update_subtab_badge,
-    lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : 0xE2403A), LV_PART_MAIN);
+    lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : 0xE2403A), LV_PART_MAIN);   // red, as the bar's update "!"
   lv_obj_set_style_bg_opa(s_update_subtab_badge, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_align(s_update_subtab_badge, alignment, x, y);
   lv_obj_add_flag(s_update_subtab_badge, LV_OBJ_FLAG_HIDDEN);
 }
 
+#if CAP_FIXED_NAVIGATION
+// Fixed navigation's Settings tab: a grid of tiles, one per group (or a lone
+// category), each group opening its own grid of categories.
 static lv_obj_t* s_fixed_landing = nullptr;
 static lv_obj_t* s_fixed_landing_panel = nullptr;
 static int s_fixed_landing_group = -1;
@@ -47900,7 +48038,7 @@ static void fixedSettingsLandingShow(int group) {
   fixedSettingsPagerInit(s_fixed_landing_pager, grid);
   auto tile = [&](int cat, const char* title, lv_event_cb_t cb, intptr_t arg, bool group_tile = false) {
     char value[96];
-    const bool summary = settingsCatValue(cat, value, sizeof value, group_tile);
+    const bool summary = fixedSettingsCatValue(cat, value, sizeof value, group_tile);
     s_settings_cat_card[cat] = fixedSettingsTile(grid, kSettingsCats[cat].icon, title, settingsCatHue(cat),
                                                cb, (void*)arg, summary ? &s_settings_cat_val[cat] : nullptr,
                                                group < 0 && cat == CAT_DEVICE);
@@ -47936,6 +48074,7 @@ static void fixedSettingsLandingShow(int group) {
   fixedSettingsPagerFit(s_fixed_landing_pager);
   navMarkDirty();
 }
+#endif  // CAP_FIXED_NAVIGATION
 
 #if CAP_LUA_APPS
 // Apply the Lua Store's built-in hide bits to the settings landing WITHOUT
@@ -47943,11 +48082,13 @@ static void fixedSettingsLandingShow(int group) {
 // has to flip the existing card (flex layout skips hidden children, so the grid
 // closes up on its own).
 void settingsApplyHiddenCats() {
-  if (fixedNavigationEnabled()) {
+#if CAP_FIXED_NAVIGATION
+  if (fixedNavigationEnabled()) {   // the tiles are built per group: rebuild the open one
     if (s_fixed_landing && lv_obj_is_valid(s_fixed_landing) && s_fixed_landing_group >= 0)
       fixedSettingsLandingShow(s_fixed_landing_group);
     return;
   }
+#endif
   const uint32_t hide = touchPrefsGetAppHide();
   if (s_settings_cat_card[CAT_MQTT] && lv_obj_is_valid(s_settings_cat_card[CAT_MQTT])) {
     if (hide & APPHIDE_MQTT) lv_obj_add_flag(s_settings_cat_card[CAT_MQTT], LV_OBJ_FLAG_HIDDEN);
@@ -47965,16 +48106,20 @@ static void settingsLandingRefresh(bool live_only) {
   for (int c = 0; c < CAT_COUNT; ++c) {
     lv_obj_t* v = s_settings_cat_val[c];
     lv_obj_t* l = s_settings_cat_lbl[c];
-    if (fixedNavigationEnabled()) {
+#if CAP_FIXED_NAVIGATION
+    if (fixedNavigationEnabled()) {   // a tile's state line; live_only: the ones that change on their own
       if (!v) continue;
       if (live_only && c != CAT_WIFI && c != CAT_BLUETOOTH && c != CAT_GPS && c != CAT_BATTERY &&
           c != CAT_PROFILE && c != CAT_RADIO) continue;
       char value[96], clean[112];
-      settingsCatValue(c, value, sizeof value, s_fixed_landing_group < 0 && c != CAT_DEVICE);
+      fixedSettingsCatValue(c, value, sizeof value, s_fixed_landing_group < 0 && c != CAT_DEVICE);
       copyUtf8ReplacingMissingGlyphs(&g_font_12, clean, sizeof clean, value);
       if (strcmp(lv_label_get_text(v), clean) != 0) lv_label_set_text(v, clean);
       continue;
     }
+#else
+    (void)live_only;
+#endif
     if (!v || !l) continue;
     const lv_coord_t avail = s_settings_row_avail[c];
     char val[96];
@@ -48033,7 +48178,8 @@ static void makeSettings(lv_obj_t* tab) {
   s_settings_sheet    = nullptr;
   s_settings_open_cat = -1;
 
-  if (fixedNavigationEnabled()) {
+#if CAP_FIXED_NAVIGATION
+  if (fixedNavigationEnabled()) {   // the tile grid instead of the grouped list
     s_fixed_landing_panel = nullptr;
     s_update_subtab_badge = nullptr;
     s_fixed_landing = setBox(tab);
@@ -48042,6 +48188,7 @@ static void makeSettings(lv_obj_t* tab) {
     fixedSettingsLandingShow(-1);
     return;
   }
+#endif
 
   const lv_coord_t hor = tabContentW();   // minus the Condense Nav rail, when there is one
   const bool two_cols = hor >= 440;       // the wide panels: two columns of groups
@@ -48231,6 +48378,7 @@ static void makeSettings(lv_obj_t* tab) {
       lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
       lv_obj_align(lbl, LV_ALIGN_LEFT_MID, text_x, 0);
 
+      // On the icon tile's corner: the row's right side carries the hardware name.
       if (c == CAT_DEVICE) attachSettingsUpdateBadge(row, LV_ALIGN_LEFT_MID, 6 + tile - 5, -tile / 2 + 1);
     }
   }
@@ -53630,7 +53778,9 @@ static void pushDiagLine(const char* message) {
                   "%s\n", s_diag_ring[i % DIAG_LINES]);
   }
   lv_label_set_text(g_lv.diag_label, p > 0 ? block : "");
-  if (s_fixed_detail_pager.view) settingsPageRefit();
+#if CAP_FIXED_NAVIGATION
+  if (s_fixed_detail_pager.view) settingsPageRefit();   // a longer log changes a paged page's pages
+#endif
 }
 
 static void pushLogLine(char ring[][RXLOG_COLS], int& line_counter, const char* message) {
@@ -58370,7 +58520,10 @@ static bool m9LockedHomeDrawerFrontmost() {
   lv_obj_t* top = lv_layer_top();
   return getActiveTab() == HOME_TAB_INDEX &&
          s_home_is_drawer && touchPrefsGetHomeKeyKeepsDrawer() &&
-         s_home_drawer_mode && s_appdrawer_root && s_drawer_page.group < 0 &&
+         s_home_drawer_mode && s_appdrawer_root &&
+#if CAP_FIXED_NAVIGATION
+         s_drawer_page.group < 0 &&   // not inside a fixed-navigation folder
+#endif
          navTopHasVisibleChild(top) && navTopFrontmostChild(top) == s_appdrawer_root;
 #else
   return false;
@@ -58426,8 +58579,10 @@ static void bleKbdBack() {
   else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
   else if (m9LockedHomeDrawerFrontmost())        { /* configured Home root */ }
   else if (anyPopupOpen())                       hwKeyDismissTopPopup();
+#if CAP_FIXED_NAVIGATION
   else if (fixedNavigationEnabled() && s_fixed_landing_group >= 0 && getActiveTab() == SETTINGS_TAB_INDEX)
-    fixedSettingsLandingShow(-1);
+    fixedSettingsLandingShow(-1);   // a settings group's grid: back to the groups
+#endif
   else if (getActiveTab() != HOME_TAB_INDEX)     navGoToMainTab(HOME_TAB_INDEX);
   s_nav_show = true;
 #if BLE_KBD_TRACE
@@ -64649,7 +64804,11 @@ static void setHomeDrawer(bool show) {
   s_home_drawer_mode = show;
   s_tab_changed = false;   // explicit action — don't let a pending switch flag suppress the next Home toggle
   if (show) { if (!s_appdrawer_root) openAppDrawer(); }
-  else { s_drawer_page = {}; closeAppDrawer(); }
+#if CAP_FIXED_NAVIGATION
+  else { s_drawer_page = {}; closeAppDrawer(); }   // the next open starts at the top level
+#else
+  else        closeAppDrawer();
+#endif
 }
 
 #if defined(HAS_TANMATSU)
@@ -65001,6 +65160,8 @@ static void appLaunch(int act, lv_event_t* e) {
 }
 static void renderAppDrawer(bool scanInstalled);
 
+#if CAP_FIXED_NAVIGATION
+// Fixed navigation's Back in the drawer: out of a folder, else closes the drawer.
 // Returning to a folder keeps its place even when a badge rebuilds the drawer.
 static void appDrawerBack() {
   const int group = s_drawer_page.group;
@@ -65009,6 +65170,7 @@ static void appDrawerBack() {
   s_drawer_left = true;
   renderAppDrawer(false);
 }
+#endif
 
 static void appTileCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -65019,12 +65181,14 @@ static void appTileCb(lv_event_t* e) {
 #if CAP_LUA_APPS
   if (s_tile_lp_fired) { s_tile_lp_fired = false; return; }   // release-click after a long press
 #endif
-  if (act <= -2) {
+#if CAP_FIXED_NAVIGATION
+  if (act <= -2) {   // a folder tile (fixed navigation): open the folder
     s_drawer_page.group = -2 - act;
     s_drawer_page.index = 0;
     renderAppDrawer(false);
     return;
   }
+#endif
   appLaunch(act, e);
 }
 
@@ -65536,6 +65700,9 @@ static lv_obj_t* proNameBand(lv_obj_t* parent, int w) {
 }
 #endif
 
+#if CAP_FIXED_NAVIGATION
+// Fixed navigation: when the apps do not fit one screen, the drawer shows folders
+// (by the tiles' hues) and pages, with a footer for Back and the page arrows.
 enum { DRAWER_MESH, DRAWER_LOCATION, DRAWER_RADIO, DRAWER_SYSTEM, DRAWER_APPS, DRAWER_GROUPS };
 static const struct { const char* name; const char* icon; uint8_t hue; } kDrawerGroups[DRAWER_GROUPS] = {
   { "Mesh", UI_ICON_MESSAGE_SQUARE, HUE_MSG }, { "Location", UI_ICON_MAP_PIN, HUE_PLACE },
@@ -65555,12 +65722,22 @@ static int drawerTileGroup(int tile) {
   }
 }
 
+static lv_obj_t* s_drawer_arrows[2] = { nullptr, nullptr };   // the footer's previous / next page
+
 static void drawerStepCb(lv_event_t* e) {
   const int step = (int)(intptr_t)lv_event_get_user_data(e);
   if (!step) { appDrawerBack(); return; }
   s_drawer_page.index += step;
   renderAppDrawer(false);
+#if CAP_KEYPAD_NAV
+  // The rebuild drops the focus: put it on the same arrow again, or on the other
+  // one when this was the last page that way.
+  lv_obj_t* same = s_drawer_arrows[step > 0];
+  lv_obj_t* to = same && !lv_obj_has_state(same, LV_STATE_DISABLED) ? same : s_drawer_arrows[step < 0];
+  if (to) { s_nav_focus_hint = to; navMarkDirty(); }
+#endif
 }
+#endif  // CAP_FIXED_NAVIGATION
 
 static void openAppDrawer() { renderAppDrawer(true); }
 
@@ -65617,15 +65794,21 @@ static void renderAppDrawer(bool scanInstalled) {
   }
   int n = 0;
 #if CAP_LUA_APPS
-  static int order[kAppTiles + kLuaInstMax];
+  // Hide filter (Store page toggles) + installed Lua apps as dynamic tiles.
+#if CAP_FIXED_NAVIGATION
+  static int order[kAppTiles + kLuaInstMax];   // fixed pages reach every installed app
+  const int app_limit = fixedNavigationEnabled() ? kAppTiles + kLuaInstMax : 40;
+#else
+  static int order[40];
+  const int app_limit = 40;
+#endif
   const uint32_t hide = touchPrefsGetAppHide();
   for (int i = 0; i < kAppTiles; ++i) {
     if (hide & appHideBitFor(tiles[i].act)) continue;
     order[n++] = i;
   }
   if (scanInstalled) luaStoreScanInstalled();
-  const int app_limit = fixedNavigationEnabled() ? kAppTiles + kLuaInstMax : 40;
-  for (int i = 0; i < s_lua_inst_n && n < app_limit; ++i) order[n++] = -(i + 1);
+  for (int i = 0; i < s_lua_inst_n && n < app_limit; ++i) order[n++] = -(i + 1);   // negative = dynamic index i
 #else
   (void)scanInstalled;
   int order[kAppTiles];
@@ -65669,11 +65852,13 @@ static void renderAppDrawer(bool scanInstalled) {
   const int rows   = (n + cols - 1) / cols;
   const int visible = sh - STATUSBAR_H - TABBAR_H;
   int tile_h = SC(big_grid ? 48 : 34) + lv_font_get_line_height(big_grid ? &g_font_14 : &g_font_12) + 10;
+  const bool fixed = fixedNavigationEnabled();
+#if CAP_FIXED_NAVIGATION
   const int footer_h = LV_MAX(SC(26), lv_font_get_line_height(&g_font_12) + 8);
   fixed_drawer::Window view{0, n, 1, false};
   int group_badges[DRAWER_GROUPS] = {};
-  const bool fixed = fixedNavigationEnabled();
-  if (fixed) {
+  s_drawer_arrows[0] = s_drawer_arrows[1] = nullptr;
+  if (fixed) {   // the tiles that fit one screen, in folders and pages when they do not all fit
     const int avail = visible - top - gap;
     const int full = cols * LV_MAX(1, (avail + gap) / (tile_h + gap));
     const int with_footer = cols * LV_MAX(1, (avail - footer_h) / (tile_h + gap));
@@ -65693,19 +65878,25 @@ static void renderAppDrawer(bool scanInstalled) {
     lv_obj_set_scroll_dir(s_appdrawer_root, LV_DIR_NONE);
     lv_obj_set_style_pad_bottom(s_appdrawer_root, 0, LV_PART_MAIN);
   }
-  for (int i = view.first; i < view.end; i++) {
-    const int slot = i - view.first;
+  const int first = view.first, end = view.end;
+#else
+  const int first = 0, end = n;
+#endif
+  for (int i = first; i < end; i++) {
+    const int slot = i - first;
     const int col = slot % cols, row = slot / cols;
     const int x = pad + col * (tile_w + gap), y = top + row * (tile_h + gap);
     const int oi = order[i];
-    const uint32_t rb = lookRainbow(i, n);
-    if (oi >= kAppTiles) {
+    const uint32_t rb = lookRainbow(i, n);   // Taste the rainbow: this tile's own hue
+#if CAP_FIXED_NAVIGATION
+    if (oi >= kAppTiles) {   // a folder (fixed navigation)
       const int group = oi - kAppTiles;
       const auto& folder = kDrawerGroups[group];
       addAppTile(s_appdrawer_root, x, y, tile_w, tile_h, folder.icon, TR(folder.name),
                  -2 - group, group_badges[group], appTileColor(folder.hue), big_grid);
       continue;
     }
+#endif
 #if CAP_LUA_APPS
     if (oi < 0) {   // installed Lua app (dynamic)
       const LuaInstApp& a = s_lua_inst[-oi - 1];
@@ -65728,6 +65919,10 @@ static void renderAppDrawer(bool scanInstalled) {
   lv_obj_set_scrollbar_mode(s_appdrawer_root,
                             fixed || grid_h <= visible ? LV_SCROLLBAR_MODE_OFF
                             : s_theme_high_contrast ? LV_SCROLLBAR_MODE_ON : LV_SCROLLBAR_MODE_ACTIVE);
+
+  // The launcher's options (icon size, what Home opens on) live in Settings ›
+  // Display › Launcher, so the grid itself carries nothing but apps.
+#if CAP_FIXED_NAVIGATION
   if (!view.footer) return;
   const int footer_y = visible - footer_h - gap;
   auto button = [&](int x, int width, const char* caption, int step, bool enabled) {
@@ -65736,7 +65931,11 @@ static void renderAppDrawer(bool scanInstalled) {
     lv_obj_set_pos(b, x, footer_y);
     lv_obj_set_size(b, width, footer_h);
     lv_obj_add_event_cb(b, drawerStepCb, LV_EVENT_CLICKED, (void*)(intptr_t)step);
-    if (!enabled) lv_obj_add_state(b, LV_STATE_DISABLED);
+    if (!enabled) {   // greyed, and not a keypad stop either (it stays CLICKABLE)
+      lv_obj_add_state(b, LV_STATE_DISABLED);
+      lv_obj_add_flag(b, NAV_SKIP_FLAG);
+    }
+    if (step) s_drawer_arrows[step > 0] = b;
     auto* l = lv_label_create(b);
     lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
     lv_obj_set_width(l, width - 4);
@@ -65766,6 +65965,7 @@ static void renderAppDrawer(bool scanInstalled) {
     snprintf(back, sizeof(back), "%s %s", LV_SYMBOL_LEFT, TR(kDrawerGroups[s_drawer_page.group].name));
     button(pad, left_w - gap, back, 0, true);
   }
+#endif  // CAP_FIXED_NAVIGATION
 }
 
 // Status-bar long-hold (3 s) -> full-screen screenshot to /screenshots on SD.
@@ -65793,6 +65993,9 @@ static void statusBarHoldCb(lv_event_t* e) {
   }
 }
 
+#if CAP_FIXED_NAVIGATION
+// A fixed choice tile's option menu, or the help text one of its options opened:
+// the bar's Back closes that first.
 static bool fixedChoiceConfirmOpen() {
   return s_confirm_modal && lv_obj_get_user_data(s_confirm_modal) == &s_choice_dispatch;
 }
@@ -65805,13 +66008,19 @@ static bool fixedChoiceBack() {
   }
   return false;
 }
+#endif
 
-static void fixedSettingsStatusBack() {
-  if (s_confirm_modal && !s_confirm_cb) { confirmDismiss(); return; }
+// The bar's Back on a settings page: closes it, and returns to the dropdown when
+// the page was opened from there.
+static void settingsStatusBack() {
+#if CAP_FIXED_NAVIGATION
+  // Fixed navigation: a help text over the page goes first, then an open section.
+  if (fixedNavigationEnabled() && s_confirm_modal && !s_confirm_cb) { confirmDismiss(); return; }
   if (fixedSettingsDetailBack()) return;
-  const bool reopen_cc = s_settings_from_cc;
-  closeSettingsCategory();
-  if (reopen_cc) openControlCenter();
+#endif
+  const bool reopen_cc = s_settings_from_cc;   // did we get here from the dropdown?
+  closeSettingsCategory();                     // (clears s_settings_from_cc)
+  if (reopen_cc) openControlCenter();          // Back returns to the dropdown, not Home
 }
 
 static void statusBarTapCb(lv_event_t* e) {
@@ -65827,14 +66036,16 @@ static void statusBarTapCb(lv_event_t* e) {
   // the bottom of this function: "back also opens the status bar" (pisti87, beta_64).
   if (s_sb_back_ms && (uint32_t)(millis() - s_sb_back_ms) < 1500) { s_sb_back_ms = 0; return; }
   s_sb_back_ms = 0;
+#if CAP_FIXED_NAVIGATION
   if (fixedChoiceBack()) return;
+#endif
   // A full-screen tool page (RF Monitor / Spectrum) is up: the bar carries its Back
   // chevron + title, so a tap goes back (closes the page) just like settings.
   if (s_apppage_close) { s_apppage_close(); return; }
   // While a settings detail sheet is open the bar shows its Back chevron + title,
   // so a tap means "go back" rather than opening the control center.
   if (s_settings_sheet) {
-    fixedSettingsStatusBack();
+    settingsStatusBack();
     return;
   }
   // In a chat the bar shows its Back chevron (+ thread name on the lower row). A tap
@@ -65881,7 +66092,9 @@ static void statusBarReaderBackCb(lv_event_t* e) {
   // then falls through every other branch to the control-center toggle at its end — so exiting any
   // app page by the "‹" also popped the dropdown open. Harmless while this was Reader-only, wrong
   // for every app page since beta_49.
+#if CAP_FIXED_NAVIGATION
   if (fixedChoiceBack()) { s_sb_back_ms = millis() | 1u; return; }
+#endif
   if (s_apppage_close) { s_apppage_close(); s_sb_back_ms = millis() | 1u; return; }   // |1: 0 means "none"
   // A settings page's "‹ Title" on the two-row bar's second row (#833): the same
   // touch-down back, as the CLICKED alone did not take it there.
@@ -65892,7 +66105,7 @@ static void statusBarReaderBackCb(lv_event_t* e) {
     lv_area_t ba;
     lv_obj_get_coords(g_statusbar.root, &ba);
     if (pt.y < ba.y1 + STATUSBAR_H) return;   // the top row keeps the bar's usual tap
-    fixedSettingsStatusBack();
+    settingsStatusBack();
     s_sb_back_ms = millis() | 1u;
   }
 }
@@ -72836,6 +73049,8 @@ static void refreshStatusLabels() {
   if (active_tab == SENSORS_TAB_INDEX) refreshSensorsTab();
 #endif
   const bool settings_active = (active_tab == SETTINGS_TAB_INDEX);
+#if CAP_FIXED_NAVIGATION
+  // Fixed navigation's settings tiles show live states (Wi-Fi, GPS fix...): every 2 s.
   if (fixedNavigationEnabled() && settings_active && !s_settings_sheet) {
     static uint32_t last_landing_ms = 0;
     const uint32_t now = millis();
@@ -72844,6 +73059,7 @@ static void refreshStatusLabels() {
       settingsLandingRefresh(true);
     }
   }
+#endif
   // Map tab: refresh the bottom info strip (self GPS + on-map count) only
   // when the tab is actually visible. Cheap, but no point doing it on every
   // tick if the user is somewhere else.
@@ -74094,14 +74310,6 @@ static void themeTokensMute(ThemeTokens& t, uint8_t tone, bool whole) {
   for (uint32_t& h : t.hue) h = muteToneSignal(h, m);
 }
 
-static bool fixedNavigationEnabled() {
-#if CAP_FIXED_NAVIGATION
-  return s_fixed_navigation;
-#else
-  return false;
-#endif
-}
-
 // Everything colour, in boot order: the mode, the accent, then the look.
 static void applyBootTheme() {
 #if CAP_FIXED_NAVIGATION
@@ -75262,9 +75470,12 @@ static void themePageDeleteCb(lv_event_t* e) {
   }
 }
 
+#if CAP_FIXED_NAVIGATION
+// The Apply bar's height (themeMiniBuild's bh + 2 * pv + 1): fixed pages keep it above the page.
 static lv_coord_t fixedThemeHeaderHeight() {
   return SC(28) + 2 * SC(6) + 1;
 }
+#endif
 
 #if !defined(HAS_TDECK_PRO)
 // Up to the preview box again (the bar's dots).
@@ -75279,10 +75490,14 @@ static void themeMiniBuild(lv_obj_t* root, lv_obj_t* page) {
   lv_obj_t* bar = lv_obj_create(root);
   lv_obj_remove_style_all(bar);
   lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-  const lv_coord_t height = fixedThemeHeaderHeight();
-  lv_obj_set_size(bar, sw, height);
+  lv_obj_set_size(bar, sw, bh + 2 * pv + 1);
+#if CAP_FIXED_NAVIGATION
   // Fixed menus reserve this space in the page's top padding on every page.
-  const lv_coord_t inset = fixedNavigationEnabled() ? height : 0;
+  const lv_coord_t inset = fixedNavigationEnabled() ? fixedThemeHeaderHeight() : 0;
+#else
+  const lv_coord_t inset = 0;
+#endif
+  // Where the page's rows come into view: under the tall title bar.
   lv_obj_set_pos(bar, 0, lv_obj_get_style_pad_top(page, LV_PART_MAIN) - 8 - inset);
   lv_obj_set_style_bg_color(bar, lv_color_hex(COLOR_BG), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_MAIN);
@@ -75341,7 +75556,8 @@ static void themePageScrollCb(lv_event_t* e) {
   if (lv_event_get_code(e) == LV_EVENT_SCROLL) themeMiniUpdate();
 }
 #endif
-// Fixed menus keep Apply here across pages. In scrolling menus the preview has its own button.
+// The bar shows while something is picked and the box's own button has scrolled out
+// of view; never both at once. Fixed menus keep Apply here across pages.
 static void themeMiniUpdate() {
 #if !defined(HAS_TDECK_PRO)
   if (!s_tp.mini || !s_tp.apply || !s_tp.page) return;
@@ -75480,7 +75696,9 @@ static void buildThemeSettings() {
     lv_obj_clear_flag(wrap, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(wrap, card_w, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_bottom(wrap, SC(12), LV_PART_MAIN);
+#if CAP_FIXED_NAVIGATION
     fixedSettingsRememberBlock(page, wrap, TR("Preview"));
+#endif
     themePreviewBuild(wrap, 0, 0, card_w, themePreviewHeight());
     themeMiniBuild(root, page);
     lv_obj_add_event_cb(page, themePageScrollCb, LV_EVENT_SCROLL, nullptr);
@@ -90920,8 +91138,10 @@ static const PopupEnt k_popup_registry[] = {
 #endif
   { P_OPEN(s_chat_contact_tuple_popup), []{ closeChatContactTuplePopup(); }, PF_COUNT },   // a contact shared in chat: Add (#887)
   { P_OPEN(s_chat_link_picker),     []{ closeChatLinkPicker(); },         PF_COUNT },   // keyboard navigation: choose a link from the bubble
+#if CAP_FIXED_NAVIGATION
   { []{ return actListReceiver() || fixedChoiceConfirmOpen(); },
-                                    []{ fixedChoiceBack(); },            PF_COUNT },
+                                    []{ fixedChoiceBack(); },            PF_COUNT },   // a fixed choice tile's menu / its help
+#endif
   { P_OPEN(s_ra_edit_root),          []{ raCloseEditSheet(); },           PF_COUNT },   // repeater admin: edit sheet
   { P_OPEN(s_actlist_root),          []{ actListClose(); },               PF_COUNT },   // action-list menu sheet
   { P_OPEN(s_hw_pick_root),          []{ hwPickClose(); },                PF_COUNT },   // a Home widget's choices
@@ -91020,9 +91240,13 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_luastore_root),         []{ closeLuaStorePage(); },          PF_COUNT },
 #endif
   { []{ return settingsModalIsOpen(); }, []{ closeSettingsModal(); },     PF_COUNT },
+#if CAP_FIXED_NAVIGATION
   { P_OPEN(s_settings_sheet),        []{ if (!fixedSettingsDetailBack()) closeSettingsCategory(); },      PF_COUNT | PF_SWIPE },
   { []{ return fixedNavigationEnabled() && s_fixed_landing_group >= 0 && getActiveTab() == SETTINGS_TAB_INDEX; },
-    []{ fixedSettingsLandingShow(-1); }, 0 },
+    []{ fixedSettingsLandingShow(-1); }, 0 },   // a settings group's grid: Back is the groups
+#else
+  { P_OPEN(s_settings_sheet),        []{ closeSettingsCategory(); },      PF_COUNT | PF_SWIPE },
+#endif
   { P_OPEN(s_power_menu),            []{ closePowerMenu(); },             PF_COUNT },
   { P_OPEN(s_cc_root),               []{ closeControlCenter(); },         PF_COUNT },
   { P_OPEN(s_ct_sort_sheet),         []{ ctSortSheetClose(); },           PF_COUNT },
@@ -91031,7 +91255,11 @@ static const PopupEnt k_popup_registry[] = {
   { []{ return s_ct_select_mode; },  []{ ctSetSelectMode(false); },       0 },          // a MODE: Esc leaves it, but it is not "a popup is open"
   { []{ return s_map_pick_active; }, []{ mapPickExit(); },                0 },          // Map > position pick: Back cancels it, like its Cancel button
   { []{ return s_hw_arrange; },      []{ hwArrangeDone(); },              PF_COUNT | PF_SWIPE },   // Arrange Home: Back is Done; drags must not switch tabs
-  { P_OPEN(s_appdrawer_root),        appDrawerBack,                      PF_COUNT | PF_BASE },
+#if CAP_FIXED_NAVIGATION
+  { P_OPEN(s_appdrawer_root),        appDrawerBack,                       PF_COUNT | PF_BASE },   // out of a folder first
+#else
+  { P_OPEN(s_appdrawer_root),        []{ setHomeDrawer(false); },         PF_COUNT | PF_BASE },
+#endif
 };
 #undef P_OPEN
 

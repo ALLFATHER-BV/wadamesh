@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Included by UITask.cpp after the settings builders.
+// Included by UITask.cpp after the settings builders, on CAP_FIXED_NAVIGATION boards only.
 struct FixedSettingsPage {
   lv_coord_t top;
   lv_coord_t height;
@@ -41,14 +41,10 @@ static void fixedSettingsPagerMove(FixedSettingsPager& pager) {
   lv_obj_set_height(pager.view, page.height + lv_obj_get_style_pad_top(pager.view, LV_PART_MAIN));
   lv_obj_update_layout(pager.view);
   lv_obj_scroll_to_y(pager.view, page.top, LV_ANIM_OFF);
-  if (pager.index == 0) lv_obj_add_state(pager.previous, LV_STATE_DISABLED);
-  else lv_obj_clear_state(pager.previous, LV_STATE_DISABLED);
-  if (pager.index + 1 == pager.pages.size()) lv_obj_add_state(pager.next, LV_STATE_DISABLED);
-  else lv_obj_clear_state(pager.next, LV_STATE_DISABLED);
   char count[32];
   snprintf(count, sizeof count, "%u/%u", (unsigned)pager.index + 1, (unsigned)pager.pages.size());
   lv_label_set_text(pager.count, count);
-  navMarkDirty();
+  fixedPagerButtons(pager.previous, pager.next, pager.index > 0, pager.index + 1 < pager.pages.size());
 }
 
 static void fixedSettingsPageClick(lv_event_t* event) {
