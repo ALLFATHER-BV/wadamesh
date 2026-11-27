@@ -46,7 +46,7 @@ bool TDeckProDisplay::begin() {
 
   SPI.begin(PIN_TFT_SCLK, PIN_TFT_MISO, PIN_TFT_MOSI, PIN_TFT_CS);
   _epd.init(115200, true, 2, false, SPI,
-            SPISettings(2000000, MSBFIRST, SPI_MODE0));
+            SPISettings(4000000, MSBFIRST, SPI_MODE0));   // GxEPD2's own default clock
   _epd.setRotation(0);
   _epd.epd2.setBusyCallback(&TDeckProDisplay::busyCallback);
 
