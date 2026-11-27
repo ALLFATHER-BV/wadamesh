@@ -236,7 +236,7 @@ void TDeckProDisplay::serviceRefresh(bool force) {
   // exception is refreshWhileAsleep(), the lock screen's periodic repaint.
   if (!_refresh_pending || _sleeping || !_mono) return;
   const uint32_t now = millis();
-  if (!force && _last_refresh_ms && now - _last_refresh_ms < 250) return;
+  if (!force && _last_refresh_ms && now - _last_refresh_ms < COALESCE_MS) return;
 
   const bool full = _full_refresh_pending || !_sent_valid || _partial_refreshes >= 9;
   int top = 0, bottom = HEIGHT - 1;

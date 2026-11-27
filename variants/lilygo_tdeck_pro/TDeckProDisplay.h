@@ -73,6 +73,11 @@ private:
   static constexpr int WIDTH = 240;
   static constexpr int HEIGHT = 320;
   static constexpr size_t MONO_BYTES = (size_t)WIDTH * HEIGHT / 8;
+  // How long after one update the next may start, so a burst of LVGL changes
+  // lands in one frame. The update itself blocks for about 0.7 s, and input
+  // queued meanwhile is drawn within a pass or two of the UI loop, so this
+  // only has to cover those passes.
+  static constexpr uint32_t COALESCE_MS = 80;
 
   lgfx::LGFX_Sprite _canvas;
   Eink _epd;
