@@ -89854,6 +89854,11 @@ void UITask::loop() {
   {
     static PaperTapHold::State s_paper_tap_hold;
     lv_disp_t* const paper_disp = lv_disp_get_default();
+    // The page buttons follow what is on screen, and the loop's own sync only
+    // sees a new screen on the pass after it was committed: the buttons then
+    // cost a panel update of their own. Sync them into the frame that is about
+    // to go out instead; if that changes them, LVGL draws them first (below).
+    if (display.refreshPending()) epaperScrollControlsSync(true);
     uint32_t paper_pressed_ms = 0;
     for (lv_indev_t* indev = lv_indev_get_next(nullptr); indev; indev = lv_indev_get_next(indev)) {
       // Once LVGL has sent the long press, what it opened should show at once.
