@@ -29422,6 +29422,64 @@ static void webContactAction(int cidx, char op) {
   webPushContacts();
 }
 
+// Telemetry asked for from the Mesh page's contact menu (#923). One request at a time; the
+// decoded reply, a failure or the timeout comes back as {"t":"tm",...}. st: 0 = waiting,
+// 1 = reply, 2 = failed.
+static uint8_t       s_web_telem_key[6] = {0};
+static char          s_web_telem_name[32] = {0};
+static unsigned long s_web_telem_deadline_ms = 0;
+
+static void webPushTelemetry(int st, const char* name, const char* text, const char* hex) {
+  if (!s_webdata_buf) return;
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  p += snprintf(p, e - p, "{\"t\":\"tm\",\"st\":%d,\"n\":\"", st);
+  jsonEsc(p, e, name ? name : "");
+  p += snprintf(p, e - p, "\",\"r\":\"");
+  jsonEsc(p, e, text ? text : "");
+  p += snprintf(p, e - p, "\",\"x\":\"");
+  jsonEsc(p, e, hex ? hex : "");
+  p += snprintf(p, e - p, "\"}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+static void webRequestTelemetry(int cidx) {
+  ContactInfo c{};
+  if (!the_mesh.getContactByIdx((uint32_t)cidx, c)) return;
+  const char* nm = c.name[0] ? contactShownName(c.id.pub_key, c.name) : "node";
+  // The mesh holds a single pending UI reply: a second request would orphan the first.
+  if (s_web_telem_deadline_ms || s_telem_manual_pending || s_ui_ping_deadline_ms) {
+    webPushTelemetry(2, nm, "Another request is still waiting for its reply", nullptr);
+    return;
+  }
+  const int r = the_mesh.uiSendRequestAfterGuestLogin(c, MyMesh::UiReqKind::Telemetry);
+  if (r != MSG_SEND_SENT_FLOOD && r != MSG_SEND_SENT_DIRECT) {
+    webPushTelemetry(2, nm, "Request could not be sent", nullptr);
+    return;
+  }
+  memcpy(s_web_telem_key, c.id.pub_key, sizeof s_web_telem_key);
+  strncpy(s_web_telem_name, nm, sizeof s_web_telem_name - 1);
+  s_web_telem_name[sizeof s_web_telem_name - 1] = '\0';
+  const unsigned long dl = millis() + UI_PING_TIMEOUT_MS;
+  s_web_telem_deadline_ms = dl ? dl : 1;
+  markMeshRequest();
+  webPushTelemetry(0, nm, nullptr, nullptr);
+}
+
+// Called from onTelemetryReply for every reply; only the node the page asked about is passed on.
+static void webTelemetryReply(const uint8_t* key, const char* text, const char* hex) {
+  if (!s_web_telem_deadline_ms || memcmp(key, s_web_telem_key, sizeof s_web_telem_key) != 0) return;
+  s_web_telem_deadline_ms = 0;
+  webPushTelemetry(1, s_web_telem_name, text, hex);
+}
+
+static void webTelemetryTick(unsigned long now) {
+  if (!s_web_telem_deadline_ms || (long)(now - s_web_telem_deadline_ms) < 0) return;
+  s_web_telem_deadline_ms = 0;
+  the_mesh.cancelUIDeferredLogin();   // a late LOGIN-OK must not fire a stale REQ
+  the_mesh.cancelUIPingPending();
+  webPushTelemetry(2, s_web_telem_name, "No reply", nullptr);
+}
+
 // Discovered (heard-but-not-added) nodes -> the "add contacts without touching the device" flow.
 static void webPushDiscovered() {
   if (!s_discovered || !s_webdata_buf) return;
@@ -29616,6 +29674,7 @@ static bool handleWebDataCmd(const char* cmd) {
   if (a[0] == 'f' && a[1] == 'v' && a[2] == ' ')  { webContactAction(atoi(a + 3), 'f'); return true; }   // favorite toggle
   if (a[0] == 'b' && a[1] == 'k' && a[2] == ' ')  { webContactAction(atoi(a + 3), 'b'); return true; }   // block toggle
   if (a[0] == 'p' && a[1] == 'r' && a[2] == ' ')  { webContactAction(atoi(a + 3), 'p'); return true; }   // reset path
+  if (a[0] == 't' && a[1] == 'm' && a[2] == ' ')  { webRequestTelemetry(atoi(a + 3)); return true; }   // request telemetry
   if (a[0] == 'x' && a[1] == 'c' && a[2] == ' ')  { webContactAction(atoi(a + 3), 'x'); return true; }   // delete contact
   if (a[0] == 'x' && a[1] == 't' && a[2] == ' ' && g_lv.task) { g_lv.task->removeThread(atoi(a + 3)); webPushThreads(); return true; }
   if (a[0] == 'd' && a[1] == ' ' && g_lv.task)    { g_lv.task->clearThreadHistory(atoi(a + 2)); webPushThreads(); return true; }
@@ -77684,6 +77743,9 @@ void UITask::onTelemetryReply(const ContactInfo& contact, const uint8_t* data, s
   copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm),
                                  contact.name[0] ? contactShownName(contact.id.pub_key, contact.name) : "node");
   if (!data || len == 0) {
+#if !defined(HAS_TANMATSU)
+    webTelemetryReply(contact.id.pub_key, "Empty telemetry", nullptr);
+#endif
     char msg[64];
     snprintf(msg, sizeof(msg), "%s: empty telemetry", nm);
     showAlert(msg, 4000);
@@ -77814,6 +77876,13 @@ done: {
     hp += snprintf(hex + hp, sizeof(hex) - (size_t)hp, "%02X ", data[i]);
   }
   if (hp > 0 && hex[hp - 1] == ' ') hex[hp - 1] = '\0';
+#if !defined(HAS_TANMATSU)
+  {
+    char raw[16];
+    snprintf(raw, sizeof raw, "%uB", (unsigned)len);
+    webTelemetryReply(contact.id.pub_key, any ? body : raw, hex);
+  }
+#endif
   char msg[240];
   if (any) {
     snprintf(msg, sizeof(msg), "%s: %s\n[%uB] %s",
@@ -88671,6 +88740,9 @@ void UITask::loop() {
     the_mesh.cancelUIPingPending();     // drop the pending reply tag if the REQ was already sent
     if (s_telemetry_root) openTelemetryWindow(s_telem_node, s_telem_name, TELEM_FAILED);
   }
+#endif
+#if !defined(HAS_TANMATSU)
+  webTelemetryTick(now);
 #endif
 
   /* User button (BOOT / PIN_USER_BTN): press toggles the screen. When the

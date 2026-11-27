@@ -160,6 +160,7 @@ function clicked(fn){return function(){if(Date.now()-lpAt<650)return;fn()}}
 function contactSheet(c){sheet(c.n||'Contact',[
  {label:'Message',fn:function(){if(c.t>=0)wsSend('@m '+c.t);else wsSend('@oc '+c.i)}},
  {label:'Info',fn:function(){wsSend('@ic '+c.i)}},
+ {label:'Telemetry',fn:function(){wsSend('@tm '+c.i)}},
  {label:c.fav?'Unfavorite':'Favorite',fn:function(){wsSend('@fv '+c.i)}},
  {label:'Reset path',fn:function(){wsSend('@pr '+c.i)}},
  {label:c.ign?'Unblock':'Block',fn:function(){wsSend('@bk '+c.i)}},
@@ -206,6 +207,9 @@ var hist=[],hi=0,CMDS=['help','?','status','ver','clock','get','advert','advert.
 function tadd(t,cls){var s=document.createElement('span');if(cls)s.className=cls;s.textContent=t;E('o').appendChild(s);E('o').scrollTop=E('o').scrollHeight}
 function tsend(){var v=E('i').value;E('i').value='';if(!v.trim())return;if(v.trim()=='clear'){E('o').innerHTML='';return}
  tadd('\n> '+v+'\n','c');hist.push(v);hi=hist.length;if(!wsSend(v))tadd('(not connected)\n','err')}
+function showTelemetry(d){var n=d.n||'node';if(d.st==0){showToast(-1,'Telemetry','Requesting from '+n+'\u2026');return}
+ var r=(d.r||'').replace(/[\ue000-\uf8ff]\s?/g,'');var h=d.st==1?r.split(/\s{2,}/).map(function(v){return '<div class=kv><span>'+esc(v)+'</span></div>'}).join(''):'<p>'+esc(r)+'</p>';
+ if(d.x)h+='<div class=kv><b>Raw</b><span>'+esc(d.x)+'</span></div>';modal('Telemetry \u00b7 '+n,h)}
 function onData(s){var d;try{d=JSON.parse(s)}catch(_){return}
  if(d.t=='t'){onThreads(d.threads||[])}
  else if(d.t=='c'){contacts=d.contacts||[];channels=d.channels||[];discCount=d.dc||0;renderContacts()}
@@ -213,6 +217,7 @@ function onData(s){var d;try{d=JSON.parse(s)}catch(_){return}
  else if(d.t=='m'){openChatView(d)}
  else if(d.t=='st'){renderStatus(d)}
  else if(d.t=='ci'){showContactInfo(d)}
+ else if(d.t=='tm'){showTelemetry(d)}
  else if(d.t=='dc'){showDiscovered(d.nodes||[])}
  else if(d.t=='sg'){showSettings(d)}
  else if(d.t=='rx'){wsSend('@t');if(chat&&chat.i>=0)wsSend('@m '+chat.i);if(chat)mentionRequest();if(curTab=='contacts')wsSend('@c')}}
