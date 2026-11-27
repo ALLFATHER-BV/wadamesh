@@ -516,8 +516,13 @@ local function build_wada()
 end
 
 -- ---- scenario driver -------------------------------------------------------------
+-- The device sandbox removes these globals (openSandbox in LuaAppHost.cpp), so the app
+-- runs without them here too; the harness itself keeps them.
+local SANDBOX_KILLED = { dofile = true, loadfile = true, load = true, require = true, collectgarbage = true }
+local app_env = setmetatable({}, { __index = function(_, k) if not SANDBOX_KILLED[k] then return _G[k] end end })
+
 local function load_app()
-  local chunk, err = loadfile(APP_PATH)
+  local chunk, err = loadfile(APP_PATH, "t", app_env)
   assert(chunk, err)
   local app
   assert(guarded(INIT_BUDGET, function() app = chunk() end), "chunk failed")

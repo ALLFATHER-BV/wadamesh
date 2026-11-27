@@ -155,8 +155,8 @@
     {
       "id": "ebook",
       "name": "Ebook",
-      "ver": "2.0",
-      "released": "2026-11-25",
+      "ver": "2.0.1",
+      "released": "2026-11-27",
       "desc": "Reads .epub books and plain .txt files from the app's folder, with chapters, text sizes and a remembered place. An .epub must be stored uncompressed: repack it with scripts/ebook-prep.py.",
       "icon": "list",
       "requires": "sdk_ext",
