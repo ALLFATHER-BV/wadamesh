@@ -81582,13 +81582,16 @@ int UITask::findOrCreateThread(const char* name, bool channel) {
 // The table is full (#921). Every channel holds a slot for good, so a device with
 // many channels has little room left for DMs, and opening a chat or taking a DM
 // from a new sender silently failed. Hand over the DM thread idle longest: not
-// the open one, nor one with unread messages or a mention. Its messages stay in
-// the ring and come back with the thread if that contact writes again.
+// the open one, nor one with unread messages or a mention, nor one the user kept
+// as an empty chat, nor one a Delete or Clear confirm is open for (confirming would
+// then hit the new thread in that slot). Its messages stay in the ring and come
+// back with the thread if that contact writes again.
 int UITask::reuseIdlestDmThread() {
   int victim = -1;
   for (int t = 0; t < MAX_UI_THREADS; ++t) {
     const UIThread& th = _ui_threads[t];
     if (!th.used || th.channel || t == _active_thread_idx || th.unread || th.has_mention) continue;
+    if (th.keep_when_empty || t == s_chat_del_thread_idx || t == s_hist_clear_thread) continue;
     if (victim < 0 || th.last_ts < _ui_threads[victim].last_ts) victim = t;
   }
   if (victim < 0) return -1;
