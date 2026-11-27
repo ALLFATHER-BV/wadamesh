@@ -83606,7 +83606,7 @@ bool UITask::sendComposerToActiveThread(const char* override_text) {
   // Resend (message action menu) passes the original message text; a normal send uses
   // the composer draft. On a resend we must NOT clear the composer (a half-typed draft).
   const char* text = (override_text && override_text[0]) ? override_text : _compose_buf;
-  // Empty or only spaces: nothing to send, and the draft stays as it is.
+  // Empty or only whitespace: nothing to send, and the draft stays as it is.
   if (BlankMessage::isBlank(text)) return false;
   const char* sender = (_node_prefs && _node_prefs->node_name[0]) ? _node_prefs->node_name : "me";
   // Standard Arabic letters, not the field's presentation forms (#582), cut to

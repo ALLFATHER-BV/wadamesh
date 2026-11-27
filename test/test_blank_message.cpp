@@ -14,6 +14,8 @@ int main() {
   assert(BlankMessage::isBlank(" "));
   assert(BlankMessage::isBlank("  "));
   assert(BlankMessage::isBlank("\t \n\r "));
+  assert(BlankMessage::isBlank("\v\f"));          // every ASCII whitespace character
+  assert(BlankMessage::isBlank(" \t\n\v\f\r"));
 
   // A real message, however short or padded, still goes out.
   assert(!BlankMessage::isBlank("k"));
