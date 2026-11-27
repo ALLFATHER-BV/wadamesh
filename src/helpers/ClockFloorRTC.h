@@ -36,13 +36,16 @@ public:
   // THIS boot, not anything persisted. Treating "above MIN_VALID_EPOCH" as
   // "current" is what let a device with a frozen clock look authoritative; this
   // makes the difference explicit, both for the user (diagnostics) and for the
-  // cold-boot network sync, which only has a reason to run below HardwareRTC.
+  // cold-boot network sync, which only has a reason to run while the time is not
+  // current. The one thing a boot can inherit is Restart, and only on the evidence
+  // ClockRestartCarry.h asks for.
   //
-  // Ordered worst-to-best: comparisons like `< ClockSource::HardwareRTC` are
-  // the intended way to ask "is my wall time actually current?".
+  // Ordered worst-to-best. timeIsCurrent() is the way to ask "is my wall time
+  // actually current?": everything from Restart up is.
   enum class ClockSource : uint8_t {
     Seed = 0,       // compile-time ESP32 fallback — no idea what time it is
     Floor,          // persisted monotonic floor: safe for replay ordering, stale as wall time
+    Restart,        // a current time carried across a software restart (ClockRestartCarry.h)
     HardwareRTC,    // battery-backed chip that passed integrity + plausibility checks
     ExternalSync,   // NTP / GPS / companion / CLI / accepted peer time, this boot
   };
@@ -54,6 +57,7 @@ private:
   volatile uint32_t _step_backs = 0;   // trusted backward corrections this boot
   ClockSource _source = ClockSource::Seed;
   bool        _hw_present = false;
+  bool        _restart_carry = false;
 
 public:
   ClockFloorRTC(mesh::RTCClock& fallback) : AutoDiscoverRTCClock(fallback) {}
@@ -168,12 +172,15 @@ public:
     const uint32_t t = getCurrentTime();
     if (t < MIN_VALID_EPOCH || t > MAX_PLAUSIBLE_EPOCH) return;
     pushSystemClock(t);
-    if (_source >= ClockSource::HardwareRTC) return;   // a real sync already landed
+    if (timeIsCurrent()) return;   // a real sync already landed, or this was classified before
     // A battery-backed chip is the only thing that can be AHEAD of the floor at
     // boot without a network or a GPS fix, so that is what distinguishes real
-    // retention from replaying the persisted high-water mark.
+    // retention from replaying the persisted high-water mark. Without one, a
+    // restart the board vouched for (noteRestartCarry) is the only other way the
+    // restored time is still the real one.
         _source = (t <= MIN_VALID_EPOCH)       ? ClockSource::Seed
           : (_hw_present && t > before)  ? ClockSource::HardwareRTC
+          : _restart_carry               ? ClockSource::Restart
                  : ClockSource::Floor;
   }
 
@@ -186,6 +193,13 @@ public:
     if (_source < ClockSource::HardwareRTC) _source = ClockSource::HardwareRTC;
   }
 
+  // Declared by the board glue, before seedSystemClock(), when this boot is a software
+  // restart of a session whose time was current and the clock that came back has lost
+  // next to nothing (ClockRestartCarry::consume). seedSystemClock() then keeps the
+  // time current instead of dropping it to the floor. The value still has to pass
+  // seedSystemClock()'s own checks: a restored seed stays a seed.
+  void noteRestartCarry() { _restart_carry = true; }
+
   // Declared by the board after its RTC adapter probed (variants/*/target.cpp).
   // Nothing infers this from "the generic probe happened to find something":
   // that guess is exactly what made a chipless T-Deck look RTC-backed.
@@ -197,6 +211,7 @@ public:
     switch (_source) {
       case ClockSource::Seed:         return "seed";
       case ClockSource::Floor:        return "floor";
+      case ClockSource::Restart:      return "kept across restart";
       case ClockSource::HardwareRTC:  return "hardware RTC";
       case ClockSource::ExternalSync: return "external sync";
     }
@@ -204,7 +219,7 @@ public:
   }
   // "Do I actually know what time it is right now?" — the question the cold-boot
   // network sync and the UI's stale-clock treatment both need answered.
-  bool timeIsCurrent() const { return _source >= ClockSource::HardwareRTC; }
+  bool timeIsCurrent() const { return _source >= ClockSource::Restart; }
 
   // Boot-time seed from the persisted floor (only ever raises), and the getter
   // the persister reads back. Benign u32 races: both cores may touch _floor.

@@ -19,12 +19,25 @@ static SntpClockPush s_sntp_push;
 #include "helpers/esp32/SdNvsPrefs.h"        // route prefs to file storage (SD/SPIFFS), off NVS
                                              // (quoted: use wadamesh's src/ copy, not the lib's stale one)
 #include "helpers/esp32/BootTimeSync.h"      // opt-in cold-boot clock sync over saved Wi-Fi (#383)
+#include "helpers/ClockRestartCarry.h"       // a restart is not a power cut: keep a current clock current
+#include <soc/rtc.h>                         // rtc_time_get(): the RTC counter, which a restart does not reset
 #include "helpers/WifiRejoinPolicy.h"         // when the loop rejoins a dropped/failed Wi-Fi link (#685)
 #include "helpers/WifiRoam.h"                 // which saved network that rejoin tries next
 #include "ui-touch/i18n.h"                    // translated Pager transport-state alerts
 #include "wadamesh_mark_rgb.h"               // anti-aliased mesh-mark (RGB565) for the pre-LVGL boot screen
 #include "ui-touch/TouchSleep.h"             // idle light-sleep controller (loopEnd called at end of loop())
 #include "ui-touch/device_caps.h"            // CAP_BLE_KEYBOARD: keyboard mode keeps the phone link paused from boot
+#endif
+
+#if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
+// RTC no-init memory: kept through a restart, lost with the power (ClockRestartCarry.h).
+RTC_NOINIT_ATTR static ClockRestartCarry s_clock_carry;
+// Whole seconds on the RTC counter since power-up; 0 when there is nothing to read.
+// The slow clock's nominal rate is close enough: this only measures a restart.
+static uint32_t clockCarryRtcSecs() {
+  const uint32_t hz = rtc_clk_slow_freq_get_hz();
+  return hz ? (uint32_t)(rtc_time_get() / hz) : 0;
+}
 #endif
 
 #if defined(HAS_THINKNODE_M9)
@@ -1529,6 +1542,18 @@ void setup() {
   // A trusted correction can then pull a poisoned future floor back through
   // ClockFloorRTC's guarded set path without a later restore undoing it.
   rtc_clock.seedFloor(touchPrefsGetClockFloor());
+  // A software restart of a session whose time was current carries that time across,
+  // so a board with no clock chip does not come back saying "Clock not set". Every
+  // other reset, and a restart that cost the clock too much, stays on the floor.
+  // The restored time is read without getCurrentTime(): that would raise the floor
+  // seedSystemClock() compares against to recognise a clock chip.
+  {
+    const uint32_t sys = ClockFloorRTC::systemSeconds();
+    const uint32_t restored = sys > rtc_clock.getFloor() ? sys : rtc_clock.getFloor();
+    if (s_clock_carry.consume(esp_reset_reason() == ESP_RST_SW, restored, clockCarryRtcSecs())) {
+      rtc_clock.noteRestartCarry();
+    }
+  }
   rtc_clock.seedSystemClock();
 #if defined(HAS_RAK_TAP_V2)
   Serial.println("[BOOT] prefs_backend ok"); Serial.flush();
@@ -2380,6 +2405,16 @@ void loop() {
       rtc_clock.setCurrentTime(rebuilt);
     }
   }
+#endif
+#if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
+  // Before tick(), so the time the core restores after a restart is never behind the stamp.
+  { static uint32_t s_carry_next = 0;
+    if ((int32_t)(millis() - s_carry_next) >= 0) {
+      s_carry_next = millis() + 1000;
+      s_clock_carry.stamp(rtc_clock.timeIsCurrent(),
+                          rtc_clock.source() == ClockFloorRTC::ClockSource::Restart,
+                          rtc_clock.getCurrentTime(), clockCarryRtcSecs());
+    } }
 #endif
   rtc_clock.tick();
 
