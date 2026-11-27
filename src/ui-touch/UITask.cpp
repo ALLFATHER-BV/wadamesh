@@ -28672,7 +28672,6 @@ static void termDoSend(bool is_channel, const uint8_t* pub, int16_t chan_slot,
       rr = the_mesh.uiSendRepeaterDmPing(*by, expected_ack, est_timeout);
     } else {
       ContactInfo rcpt = *by;
-      rcpt.out_path_len = OUT_PATH_UNKNOWN;   // force flood routing (matches Chats TX)
       uint8_t attempt = s_term_attempt++;
       if (attempt < 4) { attempt = 4; s_term_attempt = 5; }
       rr = the_mesh.sendMessage(rcpt, ts, attempt, body, expected_ack, est_timeout);
@@ -53030,6 +53029,7 @@ static void logModeRawCb(lv_event_t* e) {
 // Poll the trackball each UI tick: move the cursor by the accumulated motion and
 // show/hide it on activity. The centre-click -> touch handling lives in the
 // PIN_USER_BTN block of UITask::loop() (it needs screen on/off context).
+static bool popupRegistryAnyOver();   // the popup registry at EOF
 // ---- Trackball map panning (Map tab only) ----
 // Each motion tick slides the pan layer live (cheap); when motion stops the
 // accumulated shift is committed to a new center + a tile/marker re-render.
@@ -53155,7 +53155,9 @@ static void updateTrackball(unsigned long now) {
   }
 
   // Flush a pending map pan if the user navigated away from the Map tab.
-  const bool on_map = (getActiveTab() == MAP_TAB_INDEX);
+  // A sheet over the map (Map options, On map list, battery chart, ...) owns the
+  // ball as it owns a finger: fall through to the scroll / cursor / nav handling.
+  const bool on_map = (getActiveTab() == MAP_TAB_INDEX) && !popupRegistryAnyOver();
   if (!on_map && s_map_tb_pan_pending) mapTrackballFinalizePan();
 
   if (on_map) {
@@ -79376,7 +79378,6 @@ bool luaHostMeshSendDM(const char* to_name, const char* text, bool* was_room) {
   if (was_room) *was_room = (by->type == ADV_TYPE_ROOM);
 
   ContactInfo rcpt = *by;
-  rcpt.out_path_len = OUT_PATH_UNKNOWN;       // flood, same as the Chats composer does
   const uint32_t ts = the_mesh.getRTCClock()->getCurrentTimeUnique();
   uint32_t expected_ack = 0, est_timeout = 0;
   const int rr = the_mesh.sendMessage(rcpt, ts, 0, (char*)text, expected_ack, est_timeout);
@@ -82218,15 +82219,19 @@ bool UITask::sendComposerToActiveThread(const char* override_text) {
   }
   recipient = *by_pub;
   ContactInfo tx_recipient = recipient;
-  // Deterministic touch send behavior: avoid stale direct-path state by forcing
-  // per-message flood routing for DM sends.
-  tx_recipient.out_path_len = OUT_PATH_UNKNOWN;
+  // Route like the phone apps: direct over the path the contact's PATH return taught
+  // us, flood only while none is known. A resend (tap-to-resend or the message menu)
+  // floods, the fallback after a direct attempt went unanswered; its PATH return then
+  // relearns the route.
+  if (override_text && override_text[0]) tx_recipient.out_path_len = OUT_PATH_UNKNOWN;
   {
     char tx_line[96];
-    snprintf(tx_line, sizeof(tx_line), "TX DM to %02X%02X%02X%02X%02X%02X p=%d->flood len=%u",
+    snprintf(tx_line, sizeof(tx_line), "TX DM to %02X%02X%02X%02X%02X%02X p=%d->%s len=%u",
              tx_recipient.id.pub_key[0], tx_recipient.id.pub_key[1], tx_recipient.id.pub_key[2],
              tx_recipient.id.pub_key[3], tx_recipient.id.pub_key[4], tx_recipient.id.pub_key[5],
-             static_cast<int>(recipient.out_path_len), static_cast<unsigned>(strlen(truncated)));
+             static_cast<int>(recipient.out_path_len),
+             tx_recipient.out_path_len == OUT_PATH_UNKNOWN ? "flood" : "direct",
+             static_cast<unsigned>(strlen(truncated)));
     pushDiagLine(tx_line);
   }
   uint32_t expected_ack = 0, est_timeout = 0;
