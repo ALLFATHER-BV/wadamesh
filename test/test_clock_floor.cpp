@@ -22,6 +22,7 @@ static int fakeGetTimeOfDay(struct timeval* tv, void*) { tv->tv_sec = g_sys; tv-
 #include "helpers/ClockFloorRTC.h"
 #undef settimeofday
 #undef gettimeofday
+#include "helpers/ClockRestartCarry.h"
 
 struct NullClock : mesh::RTCClock {
   uint32_t getCurrentTime() override { return 0; }
@@ -241,6 +242,84 @@ int main() {
     assert(core_clock_ratchets::nextSendTs(NOW, last) == NOW && last == NOW);
     assert(core_clock_ratchets::nextSendTs(NOW, last) == NOW + 1);
     assert(core_clock_ratchets::nextSendTs(NOW - 60, last) == NOW + 2);   // a small step back stays monotonic
+  }
+
+  // A restart the board vouched for (noteRestartCarry): the restored time stays
+  // current under its own source name, instead of dropping to the floor.
+  {
+    // No chip: the fallback is the system clock, restored a few seconds past the floor
+    Rig r; r.hw().hw = NOW; g_sys = NOW; r.clk.seedFloor(NOW - 5);
+    r.clk.noteRestartCarry();
+    r.clk.seedSystemClock();
+    assert(r.clk.source() == C::ClockSource::Restart && r.clk.timeIsCurrent());
+    assert(r.clk.getCurrentTime() == NOW && r.hw().writes == 0);
+    // A later seedSystemClock() (the history-record raise) does not demote it
+    r.clk.seedSystemClock();
+    assert(r.clk.source() == C::ClockSource::Restart);
+    // The time is current, so neither the mesh nor our own records move it
+    assert(!r.clk.adoptMeshPeerTime(NOW + 7200, 0x1u));
+    assert(!r.clk.adoptMeshPeerTime(NOW + 7210, 0x2u));
+    assert(r.clk.localRecordCeiling() == 0);
+    // A real sync still outranks it
+    r.clk.setCurrentTime(NOW + 30);
+    assert(r.clk.source() == C::ClockSource::ExternalSync);
+  }
+  // Without the board's word the same boot is the floor, as before
+  { Rig r; r.hw().hw = NOW; g_sys = NOW; r.clk.seedFloor(NOW - 5); r.clk.seedSystemClock();
+    assert(r.clk.source() == C::ClockSource::Floor && !r.clk.timeIsCurrent()); }
+  // A restored seed stays a seed, whatever the board said
+  { Rig r; r.hw().hw = MIN; g_sys = MIN; r.clk.noteRestartCarry(); r.clk.seedSystemClock();
+    assert(r.clk.source() == C::ClockSource::Seed && !r.clk.timeIsCurrent()); }
+  // A healthy chip ahead of the floor is still what it is
+  { Rig r; r.hw().hw = NOW; g_sys = MIN; r.clk.seedFloor(NOW - 60);
+    r.clk.noteHardwareClock(true); r.clk.noteRestartCarry(); r.clk.seedSystemClock();
+    assert(r.clk.source() == C::ClockSource::HardwareRTC); }
+
+  // ClockRestartCarry: the evidence that a restart kept the time. Accepted only for a
+  // software restart of a current session, with the clock not behind the last stamp
+  // and no more than MAX_BEHIND_SECS lost since the last real set.
+  {
+    using K = ClockRestartCarry;
+    const uint32_t B = K::MAX_BEHIND_SECS;
+    const uint32_t RTC = 5000;   // seconds on the RTC counter at the stamp
+    // The ordinary restart: stamped current, 6 s pass, the clock came back 2 s on
+    { K k{}; k.stamp(true, false, NOW, RTC);
+      assert(k.consume(true, NOW + 2, RTC + 6) && k.behind_secs == 5);
+      // ...and it is spent: the same evidence never serves a second boot
+      assert(!k.consume(true, NOW + 2, RTC + 6)); }
+    // Power-on: RTC memory holds whatever it holds, the magic is not there
+    { K k{}; assert(!k.consume(true, NOW, RTC)); }
+    { K k{0xDEADBEEFu, NOW, RTC, 0}; assert(!k.consume(true, NOW, RTC + 1)); }
+    // Any reset but a software restart is refused, and disarms
+    { K k{}; k.stamp(true, false, NOW, RTC);
+      assert(!k.consume(false, NOW + 2, RTC + 6) && k.magic == 0); }
+    // The session's time was not current: nothing to carry
+    { K k{}; k.stamp(true, false, NOW, RTC); k.stamp(false, false, NOW + 1, RTC + 1);
+      assert(!k.consume(true, NOW + 2, RTC + 6)); }
+    // No RTC counter to measure with, at the stamp or at boot
+    { K k{}; k.stamp(true, false, NOW, 0); assert(!k.consume(true, NOW + 2, RTC)); }
+    { K k{}; k.stamp(true, false, NOW, RTC); assert(!k.consume(true, NOW + 2, 0)); }
+    // The counter went back: it restarted with the power
+    { K k{}; k.stamp(true, false, NOW, RTC); assert(!k.consume(true, NOW + 2, RTC - 1)); }
+    // The clock came back behind the stamp: an older floor, not the ticked time
+    { K k{}; k.stamp(true, false, NOW, RTC); assert(!k.consume(true, NOW - 1, RTC + 6)); }
+    // A restart that sat for minutes before resetting cost the clock too much
+    { K k{}; k.stamp(true, false, NOW, RTC); assert(!k.consume(true, NOW + 2, RTC + 300)); }
+    // The limit itself: B seconds lost is kept, one more is not
+    { K k{}; k.stamp(true, false, NOW, RTC); assert(k.consume(true, NOW, RTC + B - 1) && k.behind_secs == B); }
+    { K k{}; k.stamp(true, false, NOW, RTC); assert(!k.consume(true, NOW, RTC + B)); }
+    // A clock that moved further than the counter says has lost nothing
+    { K k{}; k.stamp(true, false, NOW, RTC); assert(k.consume(true, NOW + 30, RTC + 6) && k.behind_secs == 0); }
+    // The loss adds up over consecutive restarts with no real set in between...
+    { K k{}; k.stamp(true, false, NOW, RTC);
+      assert(k.consume(true, NOW, RTC + 24) && k.behind_secs == 25);
+      k.stamp(true, true, NOW + 100, RTC + 124);                      // current only because carried
+      assert(k.consume(true, NOW + 100, RTC + 148) && k.behind_secs == 50);
+      k.stamp(true, true, NOW + 200, RTC + 248);
+      assert(!k.consume(true, NOW + 200, RTC + 272));                 // 75 s behind: back to the floor
+      // ...and a real set clears it
+      k.stamp(true, false, NOW + 300, RTC + 372);
+      assert(k.behind_secs == 0 && k.consume(true, NOW + 300, RTC + 396) && k.behind_secs == 25); }
   }
 
   printf("test_clock_floor: ok\n");
