@@ -2580,3 +2580,20 @@ With a GPS fix, asks again only after you move about 250 m, or once an hour.	Med
 With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Med cities.bin i /var/lib/wadamesh-zero viser Hjem den by, du er i, i stedet for nodenavnet.
 Z → A	Z → A
 Chat list full - delete a chat	Chatlisten er fuld - slet en chat
+Previous	Forrige
+Read more	Læs mere
+Multi-byte	Multi-byte
+Region scope	Regionsomfang
+Blank = unscoped. Channels can override it.	Tom = intet omfang. Kanaler kan tilsidesætte det.
+Scope DMs to region	Begræns DM'er til regionen
+Tiles and display	Felter og visning
+Wi-Fi offline	Wi-Fi offline
+Keyboard linked	Tastatur tilsluttet
+Keyboard not linked	Tastatur ikke tilsluttet
+Phone linked	Telefon tilsluttet
+Waiting for phone	Venter på telefon
+Resting	Hviler
+Searching…	Søger…
+Position found	Position fundet
+Scrolling	Rullende
+Fixed	Fast

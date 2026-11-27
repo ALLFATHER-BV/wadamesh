@@ -2541,3 +2541,20 @@ The voltage that reads 0%. If the device shuts down while it still shows some ch
 Use the I2C bus and raw GPS data	Достъп до I2C шината и сурови GPS данни
 "%s" wants to use the hardware: read and write devices on the I2C bus, and read the GPS receiver's raw data.\n\nA wrong write can change how a connected sensor behaves until it is powered off. The device's own keyboard, touch and power chips stay off limits.	"%s" иска достъп до хардуера: четене и запис на устройства по I2C шината и четене на суровите данни от GPS приемника.\n\nГрешен запис може да промени поведението на свързан сензор, докато не бъде изключен. Клавиатурата, сензорният екран и захранващите чипове на устройството остават недостъпни.
 Chat list full - delete a chat	Списъкът с чатове е пълен - изтрийте чат
+Previous	Назад
+Read more	Прочети още
+Multi-byte	Многобайтово
+Region scope	Регионален обхват
+Blank = unscoped. Channels can override it.	Празно = без обхват. Каналите могат да го заменят.
+Scope DMs to region	Ограничи ДС до региона
+Tiles and display	Плочки и изглед
+Wi-Fi offline	Wi-Fi офлайн
+Keyboard linked	Клавиатурата е свързана
+Keyboard not linked	Клавиатурата не е свързана
+Phone linked	Телефонът е свързан
+Waiting for phone	Изчакване на телефон
+Resting	Почива
+Searching…	Търсене…
+Position found	Позицията е намерена
+Scrolling	Превъртане
+Fixed	Фиксирано

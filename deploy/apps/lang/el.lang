@@ -2541,3 +2541,20 @@ The voltage that reads 0%. If the device shuts down while it still shows some ch
 Use the I2C bus and raw GPS data	Χρήση του διαύλου I2C και ακατέργαστων δεδομένων GPS
 "%s" wants to use the hardware: read and write devices on the I2C bus, and read the GPS receiver's raw data.\n\nA wrong write can change how a connected sensor behaves until it is powered off. The device's own keyboard, touch and power chips stay off limits.	Η εφαρμογή "%s" θέλει πρόσβαση στο υλικό: ανάγνωση και εγγραφή συσκευών στον δίαυλο I2C και ανάγνωση των ακατέργαστων δεδομένων του δέκτη GPS.\n\nΜια λάθος εγγραφή μπορεί να αλλάξει τη συμπεριφορά ενός συνδεδεμένου αισθητήρα μέχρι να απενεργοποιηθεί. Το πληκτρολόγιο, η οθόνη αφής και τα κυκλώματα τροφοδοσίας της συσκευής μένουν εκτός ορίων.
 Chat list full - delete a chat	Η λίστα συνομιλιών είναι πλήρης - διαγράψτε μια συνομιλία
+Previous	Προηγούμενο
+Read more	Περισσότερα
+Multi-byte	Πολλών byte
+Region scope	Εύρος περιοχής
+Blank = unscoped. Channels can override it.	Κενό = χωρίς εύρος. Τα κανάλια μπορούν να το αλλάξουν.
+Scope DMs to region	Περιορισμός DM στην περιοχή
+Tiles and display	Πλακίδια και προβολή
+Wi-Fi offline	Wi-Fi εκτός σύνδεσης
+Keyboard linked	Πληκτρολόγιο συνδεδεμένο
+Keyboard not linked	Πληκτρολόγιο μη συνδεδεμένο
+Phone linked	Τηλέφωνο συνδεδεμένο
+Waiting for phone	Αναμονή για τηλέφωνο
+Resting	Σε ανάπαυση
+Searching…	Αναζήτηση…
+Position found	Η θέση βρέθηκε
+Scrolling	Κύλιση
+Fixed	Σταθερή

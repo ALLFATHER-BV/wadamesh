@@ -2540,3 +2540,20 @@ The voltage that reads 0%. If the device shuts down while it still shows some ch
 Use the I2C bus and raw GPS data	Utiliser le bus I2C et les données GPS brutes
 "%s" wants to use the hardware: read and write devices on the I2C bus, and read the GPS receiver's raw data.\n\nA wrong write can change how a connected sensor behaves until it is powered off. The device's own keyboard, touch and power chips stay off limits.	"%s" veut utiliser le matériel : lire et écrire les appareils du bus I2C et lire les données brutes du récepteur GPS.\n\nUne mauvaise écriture peut modifier le comportement d'un capteur connecté jusqu'à ce qu'il soit éteint. Le clavier, l'écran tactile et les puces d'alimentation de l'appareil restent inaccessibles.
 Chat list full - delete a chat	Liste des discussions pleine - supprimez une discussion
+Previous	Précédent
+Read more	Lire la suite
+Multi-byte	Multi-octet
+Region scope	Portée régionale
+Blank = unscoped. Channels can override it.	Vide = aucune portée. Les canaux peuvent la remplacer.
+Scope DMs to region	Limiter les DM à la région
+Tiles and display	Tuiles et affichage
+Wi-Fi offline	Wi-Fi hors ligne
+Keyboard linked	Clavier connecté
+Keyboard not linked	Clavier non connecté
+Phone linked	Téléphone connecté
+Waiting for phone	En attente du téléphone
+Resting	En pause
+Searching…	Recherche…
+Position found	Position trouvée
+Scrolling	Défilement
+Fixed	Fixe

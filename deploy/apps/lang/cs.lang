@@ -2556,3 +2556,20 @@ The voltage that reads 0%. If the device shuts down while it still shows some ch
 Use the I2C bus and raw GPS data	Používat sběrnici I2C a surová data GPS
 "%s" wants to use the hardware: read and write devices on the I2C bus, and read the GPS receiver's raw data.\n\nA wrong write can change how a connected sensor behaves until it is powered off. The device's own keyboard, touch and power chips stay off limits.	"%s" chce používat hardware: číst a zapisovat zařízení na sběrnici I2C a číst surová data přijímače GPS.\n\nChybný zápis může změnit chování připojeného senzoru, dokud ho nevypnete. Vlastní klávesnice, dotyková vrstva a napájecí čipy zařízení zůstávají nedostupné.
 Chat list full - delete a chat	Seznam chatů je plný - smažte chat
+Previous	Předchozí
+Read more	Číst dál
+Multi-byte	Více bajtů
+Region scope	Rozsah regionu
+Blank = unscoped. Channels can override it.	Prázdné = bez rozsahu. Kanály ho mohou přepsat.
+Scope DMs to region	Omezit DM na region
+Tiles and display	Dlaždice a zobrazení
+Wi-Fi offline	Wi-Fi offline
+Keyboard linked	Klávesnice připojena
+Keyboard not linked	Klávesnice nepřipojena
+Phone linked	Telefon připojen
+Waiting for phone	Čekání na telefon
+Resting	Odpočívá
+Searching…	Hledání…
+Position found	Poloha nalezena
+Scrolling	Posouvání
+Fixed	Pevné

@@ -2542,3 +2542,20 @@ The voltage that reads 0%. If the device shuts down while it still shows some ch
 Use the I2C bus and raw GPS data	Folosirea magistralei I2C și a datelor GPS brute
 "%s" wants to use the hardware: read and write devices on the I2C bus, and read the GPS receiver's raw data.\n\nA wrong write can change how a connected sensor behaves until it is powered off. The device's own keyboard, touch and power chips stay off limits.	"%s" vrea să folosească hardware-ul: să citească și să scrie dispozitive pe magistrala I2C și să citească datele brute ale receptorului GPS.\n\nO scriere greșită poate schimba comportamentul unui senzor conectat până când este oprit. Tastatura, ecranul tactil și cipurile de alimentare ale dispozitivului rămân inaccesibile.
 Chat list full - delete a chat	Lista de conversații e plină - șterge o conversație
+Previous	Înapoi
+Read more	Citește mai mult
+Multi-byte	Multi-octet
+Region scope	Domeniu regional
+Blank = unscoped. Channels can override it.	Gol = fără domeniu. Canalele îl pot înlocui.
+Scope DMs to region	Limitează DM-urile la regiune
+Tiles and display	Dale și afișare
+Wi-Fi offline	Wi-Fi offline
+Keyboard linked	Tastatură conectată
+Keyboard not linked	Tastatură neconectată
+Phone linked	Telefon conectat
+Waiting for phone	Se așteaptă telefonul
+Resting	În repaus
+Searching…	Se caută…
+Position found	Poziție găsită
+Scrolling	Derulare
+Fixed	Fixă
