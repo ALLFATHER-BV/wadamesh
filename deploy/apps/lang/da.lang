@@ -2579,3 +2579,4 @@ While the screen is on, asks nearby repeaters for a signal reading when none has
 With a GPS fix, asks again only after you move about 250 m, or once an hour.	Med GPS-fix spørger den kun igen, når du har flyttet dig ca. 250 m, eller én gang i timen.
 With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Med cities.bin i /var/lib/wadamesh-zero viser Hjem den by, du er i, i stedet for nodenavnet.
 Z → A	Z → A
+Chat list full - delete a chat	Chatlisten er fuld - slet en chat

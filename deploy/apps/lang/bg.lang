@@ -2540,3 +2540,4 @@ Empty at	Празна при
 The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	Напрежението, при което се показва 0%. Ако устройството се изключва, докато още показва заряд, изберете напрежението, при което спира.
 Use the I2C bus and raw GPS data	Достъп до I2C шината и сурови GPS данни
 "%s" wants to use the hardware: read and write devices on the I2C bus, and read the GPS receiver's raw data.\n\nA wrong write can change how a connected sensor behaves until it is powered off. The device's own keyboard, touch and power chips stay off limits.	"%s" иска достъп до хардуера: четене и запис на устройства по I2C шината и четене на суровите данни от GPS приемника.\n\nГрешен запис може да промени поведението на свързан сензор, докато не бъде изключен. Клавиатурата, сензорният екран и захранващите чипове на устройството остават недостъпни.
+Chat list full - delete a chat	Списъкът с чатове е пълен - изтрийте чат

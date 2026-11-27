@@ -2539,3 +2539,4 @@ Empty at	Scarica a
 The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	La tensione che corrisponde allo 0%. Se il dispositivo si spegne mentre mostra ancora carica, scegli la tensione a cui si ferma.
 Use the I2C bus and raw GPS data	Usare il bus I2C e i dati GPS grezzi
 "%s" wants to use the hardware: read and write devices on the I2C bus, and read the GPS receiver's raw data.\n\nA wrong write can change how a connected sensor behaves until it is powered off. The device's own keyboard, touch and power chips stay off limits.	"%s" vuole usare l'hardware: leggere e scrivere dispositivi sul bus I2C e leggere i dati grezzi del ricevitore GPS.\n\nUna scrittura sbagliata può cambiare il comportamento di un sensore collegato finché non viene spento. Tastiera, touch e chip di alimentazione del dispositivo restano inaccessibili.
+Chat list full - delete a chat	Elenco chat pieno - elimina una chat
