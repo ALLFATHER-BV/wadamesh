@@ -12,6 +12,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "ui_icons.h"   // QR / emoji key labels on the P4 deck (glyph strings)
+
 #if 1
 #include "lvgl.h"
 #else
@@ -1065,6 +1067,98 @@ bool keyboardLayoutsIsLangKey(uint16_t btn) {
     return btn != 0xFFFF && btn == s_lang_btn;
 }
 
+#if defined(HAS_TDISPLAY_P4)
+/* ================================================================
+ * P4 keyboard shape — runtime remap of every language table
+ * ================================================================
+ * The tall phone-class panel gets a phone-style deck instead of the stock
+ * "numbers row + letters + control row" grid:
+ *
+ *     [1#] [ABC] [BG]  [◀] [▶] [⌫]      utility row
+ *     [ q  w  e  r  t  y  u  i  o  p ]   letters, full width
+ *     [ a  s  d  f  g  h  j  k  l  ...]
+ *     [ z  x  c  v  b  n  m  ...     ]
+ *     [Sym] [        space        ] [↵] [OK]
+ *
+ * The mode keys that used to squeeze the letter rows ("1#", "ABC", backspace,
+ * new line) move out of their way, so the letters take the whole deck width and
+ * grow as much as the screen allows; the cursor keys and the language key join
+ * the top row. Rebuilding at apply time keeps this shape identical across all
+ * 15 layouts without duplicating the tables, and the other boards keep theirs.
+ * The SPECIAL map (numbers/symbols layer, reached from "1#") is untouched.
+ */
+static void kbP4Remap(const char* const* src, const char** dst,
+                      lv_btnmatrix_ctrl_t* ctrl_out, uint16_t* lang_btn) {
+    const bool with_lang = keyboardLayoutsAnySecondary();
+
+    // 1) Keep each language's OWN three letter rows — the rows are authored in
+    // their native stagger (QWERTY: "a" opens row 2, "z" opens row 3; ЙЦУКЕН;
+    // AZERTY; Arabic-101). Only the mode keys are lifted out into the utility
+    // row. Redistributing the letters evenly would destroy the stagger and the
+    // muscle memory that comes with it.
+    const char* letter_rows[3][16];
+    int counts[3] = {0, 0, 0};
+    int row = 0;
+    const char* shift = "ABC";
+    for (const char* const* p = src; *p && (*p)[0] != '\0'; ++p) {
+        const char* k = *p;
+        if (strcmp(k, "\n") == 0) { if (row < 2) ++row; continue; }
+        if (strcmp(k, "ABC") == 0 || strcmp(k, "abc") == 0) { shift = k; continue; }
+        if (strcmp(k, "1#") == 0 || strcmp(k, KB_LANG_KEY) == 0 ||
+            strcmp(k, LV_SYMBOL_BACKSPACE) == 0 || strcmp(k, LV_SYMBOL_NEW_LINE) == 0 ||
+            strcmp(k, LV_SYMBOL_KEYBOARD) == 0 || strcmp(k, LV_SYMBOL_LEFT) == 0 ||
+            strcmp(k, LV_SYMBOL_RIGHT) == 0 || strcmp(k, LV_SYMBOL_OK) == 0 ||
+            strcmp(k, " ") == 0) continue;
+        // Punctuation that has a home on the symbols page anyway: dropping it
+        // from the letters page widens every letter and frees the slot the
+        // language key now uses.
+        if (strcmp(k, "_") == 0 || strcmp(k, "-") == 0 || strcmp(k, ":") == 0) continue;
+        if (row < 3 && counts[row] < 16) letter_rows[row][counts[row]++] = k;
+    }
+
+    int o = 0, c = 0;
+    int key_index = 0;   // button index (separators excluded) — the language key
+                         // now lives in the last letter row, so its index moves
+    auto put = [&](const char* key, lv_btnmatrix_ctrl_t ctrl) {
+        if (o + 1 < 64 && c + 1 < 64) { dst[o++] = key; ctrl_out[c++] = ctrl; ++key_index; }
+    };
+    auto sep = [&]() { dst[o++] = "\n"; };
+
+    // Top utility row: numbers mode, shift (widest slot — "ABC"/"abc" is three
+    // glyphs), language, rotate (replaces the floating rotate arrows, which
+    // hovered over the composer buttons), cursor arrows, backspace.
+    // Widths sum to 36 units: 1#=5 ABC=7 LANG=5 ROT=4 ◀=4 ▶=4 ⌫=7.
+    put("1#", LV_KEYBOARD_CTRL_BTN_FLAGS | 5);
+    put(shift, LV_KEYBOARD_CTRL_BTN_FLAGS | 7);
+    // Labels that actually render on this panel: the custom UI_ICON_* glyphs
+    // come out as "*" there (their font is not in the key font's fallback
+    // chain), so the rotate key uses LVGL's own circular-arrow symbol and the
+    // two pickers are plain short labels.
+    put(LV_SYMBOL_REFRESH, LV_KEYBOARD_CTRL_BTN_FLAGS | 5);
+    put(LV_SYMBOL_PASTE, LV_KEYBOARD_CTRL_BTN_FLAGS | 4);          // quick replies
+    put("\xF0\x9F\x98\x8A", LV_KEYBOARD_CTRL_BTN_FLAGS | 4);     // 😊 colour emoji
+    put(LV_SYMBOL_BACKSPACE, LV_BTNMATRIX_CTRL_CHECKED | 7);
+    sep();
+    for (int r = 0; r < 3; ++r) {
+        for (int i = 0; i < counts[r]; ++i) put(letter_rows[r][i], EN_KB_BTN(4));
+        sep();
+    }
+    if (lang_btn && !with_lang) *lang_btn = 0xFFFF;
+    put(LV_SYMBOL_KEYBOARD, LV_KEYBOARD_CTRL_BTN_FLAGS | 4);
+    // The language key is the bottom row's second cell and wide enough for a
+    // two-letter code without crowding ("EN"/"BG"/"RU").
+    if (with_lang) {
+        if (lang_btn) *lang_btn = (uint16_t)key_index;
+        put(s_lang_code, LV_KEYBOARD_CTRL_BTN_FLAGS | 6);
+    }
+    put(" ", 7);
+    put(LV_SYMBOL_NEW_LINE, LV_KEYBOARD_CTRL_BTN_FLAGS | 4);
+    put(LV_SYMBOL_OK, LV_KEYBOARD_CTRL_BTN_FLAGS | 4);
+    dst[o] = nullptr;
+}
+
+#endif  // HAS_TDISPLAY_P4
+
 void keyboardLayoutsApply(lv_obj_t* keyboard, KeyboardLayoutId id) {
     if (static_cast<uint8_t>(id) >= KEYBOARD_LAYOUT_COUNT) id = KeyboardLayoutId::EN;
     // Track the active layout even with NO on-screen keyboard to re-map — the
@@ -1098,10 +1192,18 @@ void keyboardLayoutsApply(lv_obj_t* keyboard, KeyboardLayoutId id) {
     s_lang_btn = 0xFFFF;   // V4 keeps the floating language button instead
 #else
   snprintf(s_lang_code, sizeof s_lang_code, "%s", lo.name);
+#if !defined(HAS_TDISPLAY_P4)
   uint16_t lower_lang_btn = 0xFFFF;
+#endif
   // NOT const: LVGL keeps the pointer in its global kb_map[] and reads it back on
   // every mode switch, so these buffers are the maps for as long as the layout is
   // active (see the s_live_* comment above).
+#if defined(HAS_TDISPLAY_P4)
+  kbP4Remap(lo.lower_map, s_live_lower, s_live_lower_ctrl, nullptr);
+  kbP4Remap(lo.upper_map, s_live_upper, s_live_upper_ctrl, &s_lang_btn);
+  lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_TEXT_LOWER, const_cast<const char**>(s_live_lower), s_live_lower_ctrl);
+  lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_TEXT_UPPER, const_cast<const char**>(s_live_upper), s_live_upper_ctrl);
+#else
   if (keyboardLayoutsAnySecondary()) {
     kbCopyMapWithLang(lo.lower_map, s_live_lower, &lower_lang_btn);
     kbCopyMapWithLang(lo.upper_map, s_live_upper, &s_lang_btn);   // same cell index in both
@@ -1114,6 +1216,7 @@ void keyboardLayoutsApply(lv_obj_t* keyboard, KeyboardLayoutId id) {
     lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_TEXT_LOWER, const_cast<const char**>(s_live_lower), s_live_lower_ctrl);
     lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_TEXT_UPPER, const_cast<const char**>(s_live_upper), s_live_upper_ctrl);
   }
+#endif  // HAS_TDISPLAY_P4
 #endif
 }
 
