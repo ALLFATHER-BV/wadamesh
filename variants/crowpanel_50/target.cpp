@@ -20,10 +20,11 @@ bool radio_init() {
   fallback_clock.begin();
   rtc_clock.begin(Wire);
   if (!radio.std_init(&radioSpi)) {
-    // The DIP switch on the back shares the slot's pins with the SD card and the
-    // speaker/microphone; only its wireless-module position connects the radio.
-    Serial.printf("[crowpanel-50] SX1262 not found (CS%d). Set the function DIP switch to the "
-                  "wireless module and seat the module in J8/J9.\n", P_LORA_NSS);
+    // The function switches S1/S0 on the back share the slot's pins with the SD card
+    // and the speaker/microphone; only WM (S1 0, S0 1) connects the radio. Elecrow
+    // sells the board with and without a module, and the slot also takes non-LoRa ones.
+    Serial.printf("[crowpanel-50] SX1262 not found (CS%d). Fit an SX1262 module in J8/J9 and set "
+                  "the function switches S1/S0 to WM (0 1).\n", P_LORA_NSS);
     return false;
   }
   return true;

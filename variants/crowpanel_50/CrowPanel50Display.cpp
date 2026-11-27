@@ -12,12 +12,13 @@ constexpr int kPanelW = 800, kPanelH = 480;
 constexpr int kTouchSda = 15, kTouchScl = 16, kTouchInt = 1;
 
 // Pixel clock. Elecrow's factory code runs 21 MHz; Meshtastic and Camillia-MT
-// run 14 MHz to leave PSRAM bandwidth for LVGL, WiFi and the radio. 12 MHz is
-// too slow: the panel drops into its own colour-cycling self-test, which only a
-// power cycle clears. The panel timings can be overridden with -D for bring-up
-// on other panel revisions.
+// run 14 MHz to leave PSRAM bandwidth for LVGL, WiFi and the radio. Some panels
+// stay white at 14 MHz and come up at 16 (#789, and a V1.3 on Discord), so 16 it
+// is, still well under Elecrow's 21. 12 MHz is too slow: the panel drops into its
+// own colour-cycling self-test, which only a power cycle clears. The panel timings
+// can be overridden with -D for bring-up on other panel revisions.
 #ifndef CROWPANEL50_PCLK_HZ
-#define CROWPANEL50_PCLK_HZ 14000000
+#define CROWPANEL50_PCLK_HZ 16000000
 #endif
 // Clock edge (LovyanGFX's pclk_idle_high sets the edge the data changes on).
 // Elecrow's 1 is right: with 0 the data changes as the panel samples it, so
