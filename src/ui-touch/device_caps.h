@@ -85,6 +85,7 @@
   #define CAP_BUILTIN_LUA_APPS 1   // build (offline, first load), and...
   #define CAP_STORE_DOWNLOADS  1   // ...the Store still installs and updates (same-origin proxy)
   #define CAP_FW_UPDATE_CHECK  0   // a reload is the update: no firmware check, no reports
+  #define CAP_FIXED_NAVIGATION 1   // the V4-R8's fixed menus, to try them in the browser (#924)
 
 #elif defined(HAS_CROWPANEL_35)          // ===== Elecrow CrowPanel Advance 3.5 (ESP32-S3) =====
   #define CAP_TOUCH        1   // GT911 capacitive touch
@@ -226,6 +227,7 @@
   // needs a reveal+hold-to-unlock input path plus the DSEC_LOCK row gates
   // (see UITask.cpp lockScreen()/noteUserInput) — a feature, not a cap flip.
   #define CAP_LOCK_SCREEN  0
+  #define CAP_FIXED_NAVIGATION 1   // optional paged menus instead of scrolling ones (#924)
 
 #elif defined(HAS_TDISPLAY_P4)        // ===== LilyGo T-Display P4 (ESP32-P4 + C6) =====
   // Phone-class handheld: RM69A10 AMOLED or HI8561 TFT, capacitive touch, SX1262 or LR2021,
@@ -368,6 +370,13 @@
   #define CAP_CITY_LOCATOR 1
 #else
   #define CAP_CITY_LOCATOR 0
+#endif
+
+// Fixed navigation (#924): an optional paged layout of the menus, chosen in
+// Settings > Theme. On in a board's block above (the V4-R8, and the browser build
+// that tests it); everywhere else the mode and its code are compiled out.
+#ifndef CAP_FIXED_NAVIGATION
+  #define CAP_FIXED_NAVIGATION 0
 #endif
 
 // Persisted, restart-to-apply UI-size selector. Large-screen boards already
