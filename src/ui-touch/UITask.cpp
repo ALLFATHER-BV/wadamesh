@@ -56791,7 +56791,13 @@ static void lockHintText(char* out, size_t cap) {
 #elif defined(HAS_TDECK_PRO)
   // Pro/Max also define HAS_PAGER_KEYBOARD, but Backspace unlock is disabled
   // for them: GPIO0 is the deliberate unlock control.
+#if defined(HAS_TDECK_MAX)
   const char* h = TR("press the BOOT button to unlock");
+#else
+  // The Pro's two buttons are unlabelled on the case: BOOT is the top one,
+  // reset the bottom one, so say which.
+  const char* h = TR("press the top BOOT button to unlock");
+#endif
 #elif defined(HAS_PAGER_KEYBOARD)
   const char* h = TR("hold Backspace to unlock");
 #elif defined(HAS_THINKNODE_M9)
@@ -61789,6 +61795,8 @@ static void powerOffNow() {
     g_lv.task->showAlert(board.externalPowerPresent() == 0
                            ? TR("Powering off\xE2\x80\xA6 hold the power key to switch on")
                            : TR("Powering off\xE2\x80\xA6 press BOOT to wake"), 1500);
+#elif defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
+    g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 press the top BOOT button to wake"), 1500);
 #else
     g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 press BOOT to wake"), 1500);
 #endif
