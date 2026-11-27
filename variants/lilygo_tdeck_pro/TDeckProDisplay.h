@@ -44,6 +44,8 @@ public:
 #endif
   bool getTouchPoint(uint16_t& x, uint16_t& y);
   void serviceRefresh(bool force = false);
+  // LVGL has flushed something that serviceRefresh() has not committed yet.
+  bool refreshPending() const { return _refresh_pending; }
   // Commit a new frame even while the panel is powered off (the locked e-paper
   // screen's periodic repaint, see LockedPaperRefresh.h). serviceRefresh powers
   // the panel back down at the end of every commit, so this only drives the
