@@ -77771,8 +77771,11 @@ void UITask::onTelemetryReply(const ContactInfo& contact, const uint8_t* data, s
   uint8_t rd_len = (len > 250) ? 250 : (uint8_t)len;
   LPPReader rd(data, rd_len);
   uint8_t channel, type;
+  size_t next = 0;   // where the next header starts; LPPReader keeps its position private
   while (rd.readHeader(channel, type)) {
     const char* sep = any ? "  " : "";
+    const size_t at = next + 2;   // this value
+    next = at + LPPData::getDataSize(type);
     switch (type) {
       case LPP_VOLTAGE: {
         float v = 0; if (!rd.readVoltage(v)) goto done;
@@ -77845,6 +77848,16 @@ void UITask::onTelemetryReply(const ContactInfo& contact, const uint8_t* data, s
       case LPP_PERCENTAGE: {
         rd.skipData(type);  // 1 byte
         if (bodyRoom()) p += snprintf(body + p, bodyRoom(), "%sch%u=pct", sep, (unsigned)channel);
+        any = true; break;
+      }
+      case LPP_GENERIC_SENSOR: {
+        // 4 bytes unsigned, big-endian, no unit (#922: a BME680's gas resistance in ohms).
+        // LPPReader has no reader for it, so the value is read at its own offset.
+        rd.skipData(type);
+        if (at + 4 > rd_len) goto done;
+        const uint32_t g = ((uint32_t)data[at] << 24) | ((uint32_t)data[at + 1] << 16) |
+                           ((uint32_t)data[at + 2] << 8) | (uint32_t)data[at + 3];
+        if (bodyRoom()) p += snprintf(body + p, bodyRoom(), "%sch%u=%lu", sep, (unsigned)channel, (unsigned long)g);
         any = true; break;
       }
       case LPP_LUMINOSITY:
