@@ -14,11 +14,14 @@ nav button{display:flex;align-items:center;gap:7px;background:none;border:0;colo
 nav button:hover{color:var(--text)}nav button.on{background:var(--panel);color:var(--text);box-shadow:var(--shadow)}
 nav button[hidden]{display:none}
 nav svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+#theme{flex:none;display:flex;align-items:center;justify-content:center;width:34px;height:34px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--sub);padding:0}
+#theme:hover{color:var(--text)}#theme svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 #views{flex:1;position:relative;min-height:0}
 iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:none;background:var(--bg)}iframe.on{display:block}
 #msg{padding:80px 24px;color:var(--sub);text-align:center}
 @media(max-width:600px){header{gap:8px;padding:0 8px}.brand span{display:none}nav{margin-left:0;flex:1}nav button{flex:1;justify-content:center;padding:6px 6px}nav button b{display:none}}
-</style></head>
+</style>
+<script>/*#include theme.js*/</script></head>
 <body><div id="app">
 <header><div class="brand"><i></i><span>wadamesh</span></div>
 <nav>
@@ -27,7 +30,8 @@ iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:none;ba
 <button data-v="screen" hidden title="Screen"><svg viewBox="0 0 24 24"><rect x=3 y=4 width=18 height=13 rx=2 /><path d="M8 21h8M12 17v4"/></svg><b>Screen</b></button>
 <button data-v="files" hidden title="Files"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><b>Files</b></button>
 <button data-v="settings" hidden title="Settings"><svg viewBox="0 0 24 24"><circle cx=12 cy=12 r=3 /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><b>Settings</b></button>
-</nav></header>
+</nav>
+<button id="theme"></button></header>
 <div id="views"><div id="msg">Connecting…</div></div>
 </div>
 <script>
@@ -46,6 +50,18 @@ function show(n){
   try{history.replaceState(null,'','#'+n);}catch(e){}
 }
 tabs.forEach(function(b){b.onclick=function(){show(b.dataset.v);};});
+// Theme button cycles Auto (follow the OS) -> Light -> Dark; the choice is kept per browser.
+var THEMES={auto:['Auto','<circle cx=12 cy=12 r=9 /><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/>'],
+light:['Light','<circle cx=12 cy=12 r=4 /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'],
+dark:['Dark','<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>']},themeBtn=document.getElementById('theme');
+function themeNow(){var t=document.documentElement.getAttribute('data-theme');return THEMES[t]?t:'auto';}
+function themeDraw(){var t=themeNow();themeBtn.innerHTML='<svg viewBox="0 0 24 24">'+THEMES[t][1]+'</svg>';themeBtn.title='Theme: '+THEMES[t][0];themeBtn.setAttribute('aria-label',themeBtn.title);}
+themeBtn.onclick=function(){var t={auto:'light',light:'dark',dark:'auto'}[themeNow()];
+  try{if(t==='auto')localStorage.removeItem(WT);else localStorage.setItem(WT,t);}catch(e){}
+  wTheme(t);themeDraw();
+  for(var n in frames)try{frames[n].contentWindow.wTheme(t);}catch(e){}};
+addEventListener('storage',function(e){if(e.key===WT)themeDraw();});
+themeDraw();
 fetch('/api/info',{cache:'no-store'}).then(function(r){return r.json();}).then(function(j){
   var first=null,want=location.hash.slice(1);
   tabs.forEach(function(b){if(j[b.dataset.v]){b.hidden=false;if(!first)first=b.dataset.v;}});
