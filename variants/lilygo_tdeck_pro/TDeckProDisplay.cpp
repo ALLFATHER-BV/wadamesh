@@ -238,8 +238,9 @@ void TDeckProDisplay::serviceRefresh(bool force) {
   const uint32_t now = millis();
   if (!force && _last_refresh_ms && now - _last_refresh_ms < 250) return;
 
-  const bool full = _full_refresh_pending || _partial_refreshes >= 9;
-  if (!full && _sent_valid && memcmp(_mono, _sent, MONO_BYTES) == 0) {
+  const bool full = _full_refresh_pending || !_sent_valid || _partial_refreshes >= 9;
+  int top = 0, bottom = HEIGHT - 1;
+  if (!full && !changedRows(top, bottom)) {
     _refresh_pending = false;
     return;
   }
@@ -247,12 +248,32 @@ void TDeckProDisplay::serviceRefresh(bool force) {
   digitalWrite(P_LORA_NSS, HIGH);
   digitalWrite(PIN_SD_CS, HIGH);
   digitalWrite(PIN_TFT_CS, HIGH);
-  if (full) _epd.setFullWindow();
-  else _epd.setPartialWindow(0, 0, WIDTH, HEIGHT);
-  _epd.firstPage();
-  do {
-    _epd.drawInvertedBitmap(0, 0, _mono, WIDTH, HEIGHT, GxEPD_BLACK);
-  } while (_epd.nextPage());
+  // _mono is already the panel's own format (one bit per pixel, MSB first, a
+  // clear bit is black), so it goes to the controller as it is. Drawing it
+  // through GxEPD2's 40-row page buffer walked all 76,800 pixels sixteen times
+  // for one partial update.
+  Panel& panel = _epd.epd2;
+  if (full) {
+    panel.writeImageForFullRefresh(_mono, 0, 0, WIDTH, HEIGHT);
+    panel.refresh(false);
+  } else {
+    // A partial update compares the controller's "previous" frame with its
+    // "current" one. Send both for the changed rows only, previous from what
+    // the glass shows (_sent) and current from the new frame, then refresh
+    // that band. Each update carries everything it needs, so it does not
+    // depend on what an earlier update left in the controller's memory.
+    const int rows = bottom - top + 1;
+    const size_t offset = (size_t)top * (WIDTH / 8);
+    panel.writeImageToPrevious(_sent + offset, 0, top, WIDTH, rows);
+    panel.writeImage(_mono + offset, 0, top, WIDTH, rows);
+    panel.refresh(0, top, WIDTH, rows);
+  }
+  // GxEPD2 resets the controller on the first write after a refresh, and that
+  // reset is what has always taken the panel's driving voltages down here: its
+  // paged path wrote the whole frame once more afterwards, before powerOff()
+  // (which then found the panel already off). One row does the same in about
+  // 2 ms; without it powerOff() runs the real power-off, 40 ms on every update.
+  panel.writeImageToPrevious(_mono + (size_t)top * (WIDTH / 8), 0, top, WIDTH, 1);
   _epd.powerOff();
 
   memcpy(_sent, _mono, MONO_BYTES);
@@ -266,6 +287,19 @@ void TDeckProDisplay::serviceRefresh(bool force) {
   _refresh_pending = false;
   _full_refresh_pending = false;
   _partial_refreshes = full ? 0 : (uint8_t)(_partial_refreshes + 1);
+}
+
+bool TDeckProDisplay::changedRows(int& top, int& bottom) const {
+  constexpr size_t stride = WIDTH / 8;
+  int first = 0;
+  while (first < HEIGHT &&
+         memcmp(_mono + first * stride, _sent + first * stride, stride) == 0) ++first;
+  if (first == HEIGHT) return false;
+  int last = HEIGHT - 1;
+  while (memcmp(_mono + last * stride, _sent + last * stride, stride) == 0) --last;
+  top = first;
+  bottom = last;
+  return true;
 }
 
 void TDeckProDisplay::refreshWhileAsleep() {

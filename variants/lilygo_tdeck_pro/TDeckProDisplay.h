@@ -65,6 +65,8 @@ private:
   bool readCst3530(int16_t& x, int16_t& y);
   void canvasToMono();
   void requestRefresh(bool full = false);
+  // The first and last rows where _mono differs from what the panel shows.
+  bool changedRows(int& top, int& bottom) const;
   void writeBrightness(uint8_t brightness);
 
   static BusyHook _busy_hook;
