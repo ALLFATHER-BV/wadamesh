@@ -190,6 +190,7 @@ static bool s_city_on_home = false;
 #include "WifiColdStartGate.h" // host-tested: may a Wi-Fi switch start the radio from cold
 #include "ScreenIdleClock.h"   // host-tested: the screen timeout waits for the boot splash (#762)
 #include "LockedPaperRefresh.h" // host-tested: how often a retained e-paper lock frame is repainted
+#include "PaperTapHold.h"      // host-tested: when an e-paper frame waits instead of going to the panel
 #include "NotifyAlert.h"       // host-tested: what a new message sounds and buzzes (#730)
 #if defined(DOC_CAPTURE)
 extern int g_cst_debug;          // Constellation.cpp: profiling knob for capture builds
@@ -89846,7 +89847,25 @@ void UITask::loop() {
   lv_timer_handler();
 #endif
 #if defined(HAS_TDECK_PRO)
-  display.serviceRefresh();   // one coalesced e-paper update after all LVGL bands
+  // One coalesced e-paper update after all LVGL bands, unless this frame is
+  // about to be replaced: LVGL has a pointer pressed, or has changes it has
+  // not drawn yet (PaperTapHold.h). That is what makes a tap one panel update
+  // instead of two.
+  {
+    static PaperTapHold::State s_paper_tap_hold;
+    lv_disp_t* const paper_disp = lv_disp_get_default();
+    uint32_t paper_pressed_ms = 0;
+    for (lv_indev_t* indev = lv_indev_get_next(nullptr); indev; indev = lv_indev_get_next(indev)) {
+      // Once LVGL has sent the long press, what it opened should show at once.
+      if (lv_indev_get_type(indev) != LV_INDEV_TYPE_POINTER ||
+          indev->proc.state != LV_INDEV_STATE_PRESSED || indev->proc.long_pr_sent) continue;
+      const uint32_t pressed_ms = lv_tick_elaps(indev->proc.pr_timestamp) + 1;   // never 0 while pressed
+      if (pressed_ms > paper_pressed_ms) paper_pressed_ms = pressed_ms;
+    }
+    if (!PaperTapHold::hold(s_paper_tap_hold, millis(), paper_pressed_ms,
+                            paper_disp && paper_disp->inv_p > 0))
+      display.serviceRefresh();
+  }
 #endif
   uiCp("ui:tail");
 #if (CAP_SD || defined(TLORA_PAGER)) && \
