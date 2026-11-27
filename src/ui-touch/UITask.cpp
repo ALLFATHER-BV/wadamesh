@@ -2,6 +2,7 @@
 #include "TouchSleep.h"
 #include "ChatHashtag.h"
 #include "ChatContactTuple.h"
+#include <type_traits>
 #include <climits>         // INT_MAX (glibc does not pull it in transitively, macOS/ESP-IDF do)
 
 #if defined(WADA_WEB)
@@ -6526,8 +6527,32 @@ static void webMirrorTick() {
 #if defined(DOC_CAPTURE)
 static uint32_t s_dbg_flush_us = 0, s_dbg_flush_px = 0, s_dbg_flush_n = 0;   // capture builds: display flush cost
 #endif
+// Re-enter LoRa RX the moment a transmit completes, from inside a long UI frame
+// (#927). Otherwise RX waits for the next the_mesh.loop(), and a nearby repeater's
+// re-flood of a short message (0-4 x half its airtime later) is already on air, so
+// "Heard by N repeaters" never counts it. Only for wrappers that keep the core's
+// isSendComplete/onSendFinished: one that overrides them (LR11x0 preamble restore,
+// Tanmatsu's self-returning modem) keeps the stock timing.
+template <typename M> struct RadioMemberClass;
+template <typename C, typename R> struct RadioMemberClass<R (C::*)()> { typedef C type; };
+template <typename T> struct RadioVoid { typedef void type; };
+template <typename W, typename = void> struct RadioRearmable : std::false_type {};
+template <typename W>
+struct RadioRearmable<W, typename RadioVoid<decltype(&W::rearmRxAfterTx)>::type> {
+  typedef typename RadioMemberClass<decltype(&W::rearmRxAfterTx)>::type Base;
+  static constexpr bool value = std::is_same<decltype(&W::isSendComplete), bool (Base::*)()>::value &&
+                                std::is_same<decltype(&W::onSendFinished), void (Base::*)()>::value;
+};
+template <typename W>
+static inline typename std::enable_if<RadioRearmable<W>::value>::type radioRearmAfterTx(W& radio) {
+  if (!spectrumOwnsRadio()) radio.rearmRxAfterTx();
+}
+template <typename W>
+static inline typename std::enable_if<!RadioRearmable<W>::value>::type radioRearmAfterTx(W&) {}
+
 static void lvglFlushImpl(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t* color_p);
 static void lvglFlush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t* color_p) {
+  radioRearmAfterTx(radio_driver);
 #if defined(DOC_CAPTURE)
   const uint32_t t = micros();
   lvglFlushImpl(disp_drv, area, color_p);
@@ -6537,6 +6562,7 @@ static void lvglFlush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t
 #else
   lvglFlushImpl(disp_drv, area, color_p);
 #endif
+  radioRearmAfterTx(radio_driver);
 }
 static void lvglFlushImpl(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t* color_p) {
   (void)disp_drv;
