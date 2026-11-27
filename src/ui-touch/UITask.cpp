@@ -171,6 +171,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
 #include "ReaderContent.h"    // host-tested HTML text extraction + local/network link resolution
 #include "ChannelSenderSplit.h"  // host-tested "SenderName: body" split for channel/room posts
+#include "BlankMessage.h"        // host-tested: a whitespace-only draft is not sent
 #include "TakTexts.h"            // host-tested MeshCore Open TAK / MediaMesh text rules
 #include "ReactionCodec.h"       // host-tested emoji reactions from MeshCore Open / One (#791)
 #include "ReplyQuote.h"          // host-tested reply-quote rules (#641)
@@ -83605,7 +83606,8 @@ bool UITask::sendComposerToActiveThread(const char* override_text) {
   // Resend (message action menu) passes the original message text; a normal send uses
   // the composer draft. On a resend we must NOT clear the composer (a half-typed draft).
   const char* text = (override_text && override_text[0]) ? override_text : _compose_buf;
-  if (!text[0]) return false;
+  // Empty or only whitespace: nothing to send, and the draft stays as it is.
+  if (BlankMessage::isBlank(text)) return false;
   const char* sender = (_node_prefs && _node_prefs->node_name[0]) ? _node_prefs->node_name : "me";
   // Standard Arabic letters, not the field's presentation forms (#582), cut to
   // MAX_TEXT_LEN on a whole character.
