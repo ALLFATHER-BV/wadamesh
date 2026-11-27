@@ -262,6 +262,7 @@ private:
   char handleDoubleClick(char c);
   char handleTripleClick(char c);
   int findOrCreateThread(const char* name, bool channel);
+  int reuseIdlestDmThread();
   bool looksLikeKnownChannel(const char* name) const;
 public:
   void refreshThreadsFromMesh();
