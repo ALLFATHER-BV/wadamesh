@@ -19950,11 +19950,6 @@ static void enterSendsToggleCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Enter sends messages") : TR("Enter adds a new line"), 1200);
 }
 
-// New-message notify flash (opt-in): the T-Deck analog of the Tanmatsu envelope LED. On a new
-// message we wake the screen and briefly pulse the keyboard backlight. The statics below are set
-// here / in notify() and consumed in the loop()'s keyboard-backlight tick.
-static volatile uint32_t s_msgflash_until = 0;     // keyboard-backlight pulse deadline (0 = idle)
-static volatile bool     s_msgflash_wake  = false; // one-shot screen-wake request (consumed in loop())
 static uint32_t          s_notify_wake_ms = 0;     // screen lit BY a message (not input) at this ms — re-dims after a short window (burn-in)
 #if defined(HAS_TDECK_KEYBOARD)
 // Escape hatch for a keyboard the protocol detection gets wrong. Reachable by
@@ -19970,6 +19965,17 @@ static void kbForceLegacyToggleCb(lv_event_t* e) {
                                          : TR("Detecting the keyboard protocol"), 1600);
 }
 #endif
+
+#endif
+
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD) || defined(HAS_TDECK_PRO)
+// New-message notify flash (opt-in): the T-Deck analog of the Tanmatsu envelope LED. On a new
+// message we wake the screen and briefly pulse the keyboard backlight. The statics below are set
+// here / in notify() and consumed in the loop()'s keyboard-backlight tick.
+// T-Deck Pro and Max (e-paper): the keyboard light only. The panel is not woken: a wake there is
+// an e-paper refresh, and "At a glance" already decides what a message may put on it.
+static volatile uint32_t s_msgflash_until = 0;     // keyboard-backlight pulse deadline (0 = idle)
+static volatile bool     s_msgflash_wake  = false; // one-shot screen-wake request (consumed in loop())
 
 static void msgFlashToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
@@ -22353,7 +22359,14 @@ static void buildKeyboardPage() {
                  true,
 #endif
                  enterSendsToggleCb);
-    setSwitchRow(c, "Flash on new message", "Lights the keyboard and wakes the screen when a message arrives.",
+#endif
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD) || defined(HAS_TDECK_PRO)
+    setSwitchRow(c, "Flash on new message",
+#if defined(HAS_TDECK_PRO)
+                 "Lights the keyboard when a message arrives.",
+#else
+                 "Lights the keyboard and wakes the screen when a message arrives.",
+#endif
 #if defined(ESP32)
                  touchPrefsGetMsgFlash(),
 #else
@@ -54923,6 +54936,14 @@ static void updatePagerKbBacklight(unsigned long now) {
   if (s_kb_bl_mode == 1) kb_bl = 255;
   else if (s_kb_bl_mode == 2 && kbBacklightAutoActive(now)) kb_bl = 255;
   if (g_lv.task && (g_lv.task->isScreenOff() || g_lv.task->isManualLock())) kb_bl = 0;
+#if defined(HAS_TDECK_PRO)
+  // New-message notify flash (opt-in): the pulse lights the keys whatever the mode, and while
+  // the screen is off or locked too, as on the M9 -- a locked Pro on the desk is when it is
+  // wanted. The deadline is cleared once spent, so a stale one cannot read as live again when
+  // millis() wraps.
+  if (s_msgflash_until && (int32_t)(now - s_msgflash_until) >= 0) s_msgflash_until = 0;
+  if (s_msgflash_until) kb_bl = 255;
+#endif
   if (s_pin_root && g_lv.task && !g_lv.task->isScreenOff()) kb_bl = 255;   // the PIN screen lights the keys
   // 255 is a valid first value (On, or Auto during the initial activity window),
   // so an uint8_t 0xFF sentinel would skip LEDC attachment and leave the light dark.
@@ -88961,8 +88982,9 @@ void UITask::notify(UIEventType t) {
   if (t == UIEventType::contactMessage || t == UIEventType::channelMessage || t == UIEventType::roomMessage)
     msgLedFlash();
 #endif
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD) || defined(HAS_TDECK_PRO)
   // Same idea on the T-Deck and M9 (no notification LED): wake the screen + briefly light the keyboard.
+  // T-Deck Pro and Max: the keyboard light only (updatePagerKbBacklight()).
   if (touchPrefsGetMsgFlash() &&
       (t == UIEventType::contactMessage || t == UIEventType::channelMessage || t == UIEventType::roomMessage)) {
     s_msgflash_until = millis() + 1600;
@@ -90744,6 +90766,8 @@ void UITask::loop() {
   if (!s_remote_mode) {
 #if !defined(HAS_TDECK_PRO)
     updatePagerBackspaceUnlockHold(now);
+#else
+    s_msgflash_wake = false;   // new-message flash: the keyboard light only, the e-paper panel is not woken
 #endif
     updatePagerKbBacklight(now);
   }
